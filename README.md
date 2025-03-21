@@ -1,1 +1,1 @@
-# Altris_QC_Neware_Reader
+# Altris QC Neware Reader
