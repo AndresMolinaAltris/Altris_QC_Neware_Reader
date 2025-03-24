@@ -6,6 +6,7 @@ from cell_database import CellDatabase
 from statistical_analysis import *
 import openpyxl
 import yaml
+import time
 from file_selector import select_ndax_files  # Import the new file selector
 
 # Import configuration file
@@ -33,8 +34,12 @@ else:
 print(f"Processing {len(ndax_file_list)} files...")
 
 # load cell database with active mass
+print("Loading cell database...")
+start_time = time.time()
 db = CellDatabase.get_instance()
 db.load_database(cell_database)
+elapsed = time.time() - start_time
+print(f"Database loaded in {elapsed:.2f} seconds")
 
 # Initialize an empty DataFrame to store extracted features
 all_features = []
