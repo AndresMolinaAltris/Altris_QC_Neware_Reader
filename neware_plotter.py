@@ -42,9 +42,9 @@ class NewarePlotter:
         # Using the sample name as the legend
         sample_name = None
         parts = file_name.split('_')
-        if len(parts) > 1:
-            sample_name = parts[0]
-        return sample_name or file_name
+        sample_name = parts[0]
+
+        return sample_name
 
     def preprocess_ndax_file(self, file_path, cycles=None):
         """
@@ -58,8 +58,8 @@ class NewarePlotter:
         Returns:
             tuple: (file_name, DataFrame) containing the processed data
         """
-        if cycles is None:
-            cycles = SELECTED_CYCLES
+
+        cycles = SELECTED_CYCLES
 
         try:
             print(f"Processing file for plotting: {file_path}...")
@@ -73,11 +73,10 @@ class NewarePlotter:
                 print(f"Warning: No mass found for cell ID {cell_id}, using 1.0g")
                 mass = 1.0
 
-            # Read data - we'll reuse the same data read by the main process
+            # Read data
             data = NewareNDA.read(file_path)
 
             # Filter relevant columns for plotting
-            # We only need cycle, status, voltage and capacity data
             plot_data = data[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']]
             plot_data = plot_data[plot_data['Cycle'].isin(cycles)]
 
@@ -96,13 +95,23 @@ class NewarePlotter:
         """
         Creates plots for the specified files and cycles.
 
+        Generates a figure with three subplots (one for each cycle), showing
+        voltage vs. specific capacity curves for both charge and discharge.
+        Different files are represented with different colors.
+
         Args:
             files_data (dict): Dictionary mapping file names to processed DataFrames
-            cycles (list, optional): List of cycle numbers to plot
-            save_dir (str, optional): Directory to save plot images to
+                              containing voltage and capacity data
+            cycles (list, optional): List of cycle numbers to plot, defaults to [1, 2, 3]
+            save_dir (str, optional): Directory to save the generated plot.
+                                     If None, plot is only displayed.
 
         Returns:
-            list: Paths to the saved plot files
+            list: Paths to the saved plot files, or empty list if no plots were saved
+
+        Note:
+            The plot is displayed using `plt.show()`, which will block execution
+            until the plot window is closed if run in an interactive environment.
         """
         if cycles is None:
             cycles = SELECTED_CYCLES
@@ -171,18 +180,32 @@ class NewarePlotter:
 
     def plot_ndax_files(self, file_paths, cycles=None, save_dir=None, preprocessed_data=None):
         """
-        Process and plot multiple NDAX files.
+            Process and plot multiple NDAX files, showing capacity curves for specified cycles.
 
-        Args:
-            file_paths (list): List of paths to NDAX files
-            cycles (list, optional): List of cycle numbers to plot
-            save_dir (str, optional): Directory to save plot images to
-            preprocessed_data (dict, optional): Dictionary of already processed data
-                                               to avoid reloading the files
+            Creates a visualization of charge/discharge curves for the selected files.
+            Each file is processed to extract voltage and capacity data, which is then
+            plotted with consistent color coding for easy comparison between samples.
 
-        Returns:
-            list: Paths to the saved plot files
-        """
+            Args:
+                file_paths (list): List of paths to NDAX files to plot
+                cycles (list, optional): List of cycle numbers to include in the plot.
+                                        Defaults to [1, 2, 3] if None.
+                save_dir (str, optional): Directory to save plot images to.
+                                         If None, plots will only be displayed.
+                preprocessed_data (dict, optional): Dictionary mapping file names to
+                                                  preprocessed DataFrames to avoid
+                                                  reloading files.
+
+            Returns:
+                list: Paths to the saved plot files, or empty list if no plots were saved
+
+            Example:
+                >>> plotter = NewarePlotter()
+                >>> plotter.plot_ndax_files(["file1.ndax", "file2.ndax"],
+                ...                         cycles=[1, 2],
+                ...                         save_dir="./plots")
+                ['./plots/capacity_plot_20240324_120000.png']
+            """
         if cycles is None:
             cycles = SELECTED_CYCLES
 

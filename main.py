@@ -16,15 +16,26 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True, sa
     """
     Process a list of NDAX files and return the extracted features dataframe.
 
+    Extracts electrochemical features from cycles 1-3 of each NDAX file,
+    using cell mass data from the database. Optionally saves results to an
+    Excel file and generates capacity plots.
+
     Args:
-        ndax_file_list (list): List of NDAX file paths to process
-        db (CellDatabase): Instance of the cell database
-        output_file (str, optional): Path to save the results
-        enable_plotting (bool): Whether to generate plots
-        save_plots_dir (str, optional): Directory to save plots
+        ndax_file_list (list): List of paths to NDAX files to process
+        db (CellDatabase): Instance of the cell database for mass lookup
+        output_file (str, optional): Path to save the results Excel file
+        enable_plotting (bool): Whether to generate capacity plots
+        save_plots_dir (str, optional): Directory to save generated plots
 
     Returns:
-        pandas.DataFrame: DataFrame containing all extracted features
+        pandas.DataFrame: DataFrame containing all extracted features with columns for
+                         cell ID, sample name, cycle number, and various electrochemical
+                         parameters (capacities, internal resistances, etc.)
+
+    Example:
+        >>> db = CellDatabase.get_instance()
+        >>> db.load_database("cell_database.xlsx")
+        >>> df = process_files(["file1.ndax", "file2.ndax"], db, "results.xlsx")
     """
     # Initialize an empty DataFrame to store extracted features
     all_features = []
@@ -91,6 +102,19 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True, sa
 
 
 def main():
+    """
+    Main entry point for the Altris QC Neware Reader.
+
+    Loads configuration from config.yaml, initializes the cell database,
+    and processes NDAX files using the GUI file selector. Each batch of
+    files is processed separately, with results saved to Excel files.
+
+    Features are extracted from cycles 1-3 for each file, and optionally
+    plots are generated based on configuration settings.
+
+    No parameters or return values as this is the application entry point.
+    """
+
     # Import configuration file
     with open("config.yaml", "r") as file:
         config = yaml.safe_load(file)
@@ -120,6 +144,16 @@ def main():
 
     # Define a callback function to process files
     def process_file_callback(ndax_file_list):
+        """
+        Callback function for processing batches of NDAX files.
+
+        Processes a batch of files selected by the user, extracts features,
+        generates plots if enabled, and saves results to Excel. Also combines
+        all processed batches into a single output file.
+
+        Args:
+            ndax_file_list (list): List of paths to NDAX files to process
+        """
         nonlocal all_processed_features
 
         if not ndax_file_list:
