@@ -48,7 +48,8 @@ class NewarePlotter:
 
     def preprocess_ndax_file(self, file_path, cycles=None):
         """
-        Reads an NDAX file, filters for specified cycles, and computes specific capacities.
+        Reads an NDAX file and prepares it for plotting, reusing the existing
+        data processing code from the Features class.
 
         Args:
             file_path (str): Path to the NDAX file
@@ -72,19 +73,20 @@ class NewarePlotter:
                 print(f"Warning: No mass found for cell ID {cell_id}, using 1.0g")
                 mass = 1.0
 
-            # Read data
+            # Read data - we'll reuse the same data read by the main process
             data = NewareNDA.read(file_path)
 
-            # Filter relevant columns and rows
-            data = data[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']]
-            data = data[data['Cycle'].isin(cycles)]
+            # Filter relevant columns for plotting
+            # We only need cycle, status, voltage and capacity data
+            plot_data = data[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']]
+            plot_data = plot_data[plot_data['Cycle'].isin(cycles)]
 
             # Compute specific capacities
-            data['Specific_Charge_Capacity(mAh/g)'] = data['Charge_Capacity(mAh)'] / mass
-            data['Specific_Discharge_Capacity(mAh/g)'] = data['Discharge_Capacity(mAh)'] / mass
+            plot_data['Specific_Charge_Capacity(mAh/g)'] = plot_data['Charge_Capacity(mAh)'] / mass
+            plot_data['Specific_Discharge_Capacity(mAh/g)'] = plot_data['Discharge_Capacity(mAh)'] / mass
 
             print(f"File processed successfully for plotting: {file_path}")
-            return filename_stem, data
+            return filename_stem, plot_data
 
         except Exception as e:
             print(f"Error processing file for plotting {file_path}: {e}")
@@ -107,9 +109,8 @@ class NewarePlotter:
 
         saved_files = []
 
-        # Create a 2x2 grid of plots (3 individual cycles + combined)
-        fig, axs = plt.subplots(2, 2, figsize=(12, 8))
-        axs = axs.flatten()
+        # Create a single row of 3 plots for individual cycles
+        fig, axs = plt.subplots(1, 3, figsize=(15, 7))
 
         # Dictionary to store handles for the legend
         legend_handles = {}
@@ -145,53 +146,13 @@ class NewarePlotter:
             ax.grid(True)
             ax.set_xlim(left=0)
 
-        # Combined plot (all cycles)
-        ax_combined = axs[3]
-
-        for file_idx, (file_name, data) in enumerate(files_data.items()):
-            color = self.colors[file_idx % len(self.colors)]
-            legend_name = self.extract_legend_name(file_name)
-
-            for cycle_idx, cycle in enumerate(cycles):
-                line_style = self.line_styles[cycle_idx % len(self.line_styles)]
-
-                cycle_data = data[data['Cycle'] == cycle]
-                charge_data = cycle_data[cycle_data['Status'] == 'CC_Chg']
-                discharge_data = cycle_data[cycle_data['Status'] == 'CC_DChg']
-
-                if not charge_data.empty:
-                    ax_combined.plot(charge_data['Specific_Charge_Capacity(mAh/g)'], charge_data['Voltage'],
-                                     linestyle=line_style, color=color)
-
-                if not discharge_data.empty:
-                    ax_combined.plot(discharge_data['Specific_Discharge_Capacity(mAh/g)'], discharge_data['Voltage'],
-                                     linestyle=line_style, color=color)
-
-        ax_combined.set_xlabel("Specific Capacity (mAh/g)")
-        ax_combined.set_ylabel("Voltage (V)")
-        ax_combined.set_title("All Cycles Combined")
-        ax_combined.grid(True)
-        ax_combined.set_xlim(left=0)
-
-        # Add legend with both sample names and cycle numbers
+        # Add legend with sample names
         sample_handles = list(legend_handles.values())
         sample_labels = list(legend_handles.keys())
 
-        # Add cycle line style legend entries
-        cycle_handles = []
-        cycle_labels = []
-        for idx, cycle in enumerate(cycles):
-            if idx < len(self.line_styles):
-                handle = plt.Line2D([0], [0], color='black',
-                                    linestyle=self.line_styles[idx], label=f'Cycle {cycle}')
-                cycle_handles.append(handle)
-                cycle_labels.append(f'Cycle {cycle}')
-
         # Place legend below the plots
-        all_handles = sample_handles + cycle_handles
-        all_labels = sample_labels + cycle_labels
-        fig.legend(handles=all_handles, labels=all_labels,
-                   loc='lower center', ncol=len(all_handles), bbox_to_anchor=(0.5, 0.02))
+        fig.legend(handles=sample_handles, labels=sample_labels,
+                   loc='lower center', ncol=len(sample_handles), bbox_to_anchor=(0.5, 0.02))
 
         plt.tight_layout()
         plt.subplots_adjust(bottom=0.15)  # Make room for the legend
@@ -208,7 +169,7 @@ class NewarePlotter:
         plt.show()
         return saved_files
 
-    def plot_ndax_files(self, file_paths, cycles=None, save_dir=None):
+    def plot_ndax_files(self, file_paths, cycles=None, save_dir=None, preprocessed_data=None):
         """
         Process and plot multiple NDAX files.
 
@@ -216,6 +177,8 @@ class NewarePlotter:
             file_paths (list): List of paths to NDAX files
             cycles (list, optional): List of cycle numbers to plot
             save_dir (str, optional): Directory to save plot images to
+            preprocessed_data (dict, optional): Dictionary of already processed data
+                                               to avoid reloading the files
 
         Returns:
             list: Paths to the saved plot files
@@ -225,10 +188,32 @@ class NewarePlotter:
 
         # Process all files
         files_data = {}
-        for file_path in file_paths:
-            file_name, processed_data = self.preprocess_ndax_file(file_path, cycles)
-            if processed_data is not None:
-                files_data[file_name] = processed_data
+
+        # If we have preprocessed data, use it
+        if preprocessed_data:
+            for file_name, data in preprocessed_data.items():
+                # Filter data for plotting
+                plot_data = data[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']]
+                plot_data = plot_data[plot_data['Cycle'].isin(cycles)]
+
+                # Get cell ID and mass
+                cell_id = extract_cell_id(file_name)
+                mass = self.db.get_mass(cell_id) or 1.0
+
+                # Compute specific capacities if they don't already exist
+                if 'Specific_Charge_Capacity(mAh/g)' not in plot_data.columns:
+                    plot_data['Specific_Charge_Capacity(mAh/g)'] = plot_data['Charge_Capacity(mAh)'] / mass
+
+                if 'Specific_Discharge_Capacity(mAh/g)' not in plot_data.columns:
+                    plot_data['Specific_Discharge_Capacity(mAh/g)'] = plot_data['Discharge_Capacity(mAh)'] / mass
+
+                files_data[file_name] = plot_data
+        else:
+            # Process files normally if no preprocessed data
+            for file_path in file_paths:
+                file_name, processed_data = self.preprocess_ndax_file(file_path, cycles)
+                if processed_data is not None:
+                    files_data[file_name] = processed_data
 
         if not files_data:
             print("No valid data to plot.")
