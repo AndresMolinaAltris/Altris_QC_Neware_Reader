@@ -130,19 +130,12 @@ def main():
                 print(f"All results combined and saved to {output_file}")
 
     # Main processing path based on configuration
-    #if use_gui:
     # Use GUI file selector with callback to process files
     print("Opening file selector. Please select files and click 'Process Files' button when ready.")
     select_ndax_files(initial_dir=data_path, callback=process_file_callback)
     # When the GUI is closed, we're done
     print("\nFile selection window closed. Processing complete.")
-    #else:
-        # Use directory scan (original behavior)
-    #    ndax_file_list = find_ndax_files(data_path)
-    #    if not ndax_file_list:
-    #        print(f"No .ndax files found in {data_path}.")
-    #    else:
-    #        process_file_callback(ndax_file_list)
+
 
     # Combine all batches if there were multiple
     if len(all_processed_features) > 1:
