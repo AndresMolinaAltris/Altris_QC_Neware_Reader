@@ -1,6 +1,9 @@
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import os
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.figure import Figure
 
 
 class FileSelector:
@@ -15,6 +18,8 @@ class FileSelector:
         self.selected_listbox = None
         self.status_var = None
         self.current_dir = None
+        self.fig = None
+        self.canvas = None
 
     def show_interface(self, process_callback=None):
         """
@@ -30,17 +35,32 @@ class FileSelector:
         # Create and configure the main window
         self.root = tk.Tk()
         self.root.title("Neware NDAX File Selector")
-        self.root.geometry("800x500")
+        self.root.geometry("800x800")  # Increased height to ensure everything fits
 
         # Initialize variables
         self.selected_files = []
         self.current_dir = tk.StringVar(value=self.initial_dir)
-        self.status_var = tk.StringVar(value="No files selected")
+        self.status_var = tk.StringVar(value="No files selected")  # Ensure this is initialized here
 
-        # Create the UI components
-        self._create_directory_selector()
-        self._create_file_lists()
-        self._create_control_buttons(process_callback)
+        # Create a main frame to contain everything
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Create three distinct sections with explicit sides
+        top_frame = ttk.Frame(main_frame)
+        top_frame.pack(fill=tk.X, side=tk.TOP, pady=(0, 5))
+
+        middle_frame = ttk.Frame(main_frame)
+        middle_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP, pady=(0, 5))
+
+        bottom_frame = ttk.Frame(main_frame)
+        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(5, 0))
+
+        # Create the UI components in their respective frames
+        self._create_directory_selector(top_frame)
+        self._create_file_lists(middle_frame)
+        self._create_plot_area(middle_frame)
+        self._create_control_buttons(bottom_frame, process_callback)
 
         # Initialize file list and start status updates
         self._update_file_list()
@@ -54,22 +74,23 @@ class FileSelector:
             return self.selected_files
         return None
 
-    def _create_directory_selector(self):
+    def _create_directory_selector(self, parent):
         """Create the directory selection components."""
-        frame_top = ttk.Frame(self.root)
-        frame_top.pack(fill=tk.X, padx=10, pady=10)
+        frame_top = ttk.Frame(parent)
+        frame_top.pack(fill=tk.X, padx=0, pady=5)
 
         ttk.Label(frame_top, text="Directory:").pack(side=tk.LEFT, padx=(0, 5))
         ttk.Entry(frame_top, textvariable=self.current_dir, width=60).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(frame_top, text="Browse...", command=self._browse_directory).pack(side=tk.LEFT)
 
-    def _create_file_lists(self):
+    def _create_file_lists(self, parent):
         """Create the available and selected file list components."""
-        frame_files = ttk.Frame(self.root)
-        frame_files.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        # Create a container for file lists to ensure proper layout
+        file_lists_frame = ttk.Frame(parent)
+        file_lists_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP, pady=(0, 5))
 
         # Available files list
-        file_frame = ttk.LabelFrame(frame_files, text="Available NDAX Files")
+        file_frame = ttk.LabelFrame(file_lists_frame, text="Available NDAX Files")
         file_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT, padx=(0, 5))
 
         scrollbar = ttk.Scrollbar(file_frame)
@@ -80,7 +101,7 @@ class FileSelector:
         scrollbar.config(command=self.listbox.yview)
 
         # Selected files list
-        selected_frame = ttk.LabelFrame(frame_files, text="Selected Files")
+        selected_frame = ttk.LabelFrame(file_lists_frame, text="Selected Files")
         selected_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
 
         selected_scrollbar = ttk.Scrollbar(selected_frame)
@@ -91,16 +112,41 @@ class FileSelector:
         selected_scrollbar.config(command=self.selected_listbox.yview)
 
         # Add/Remove buttons
-        add_remove_frame = ttk.Frame(frame_files)
+        add_remove_frame = ttk.Frame(file_lists_frame)
         add_remove_frame.pack(fill=tk.Y, padx=5)
 
         ttk.Button(add_remove_frame, text=">>", command=self._add_selected_files).pack(pady=5)
         ttk.Button(add_remove_frame, text="<<", command=self._remove_selected_files).pack(pady=5)
 
-    def _create_control_buttons(self, process_callback):
+    def _create_plot_area(self, parent):
+        """Create the plotting area within the GUI."""
+        self.plot_frame = ttk.LabelFrame(parent, text="Plot Preview")
+        self.plot_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+
+        # Create a Figure and add it to a canvas
+        self.fig = Figure(figsize=(8, 4))
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Add a toolbar for basic navigation - in a more compact way
+        toolbar_frame = ttk.Frame(self.plot_frame)
+        toolbar_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # Add Save Plot button first
+        save_plot_button = ttk.Button(toolbar_frame, text="Save Plot", command=self._save_current_plot)
+        save_plot_button.pack(side=tk.RIGHT, padx=5)
+
+        # Then add the navigation toolbar
+        toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        toolbar.update()
+
+    def _create_control_buttons(self, parent, process_callback):
         """Create the control buttons at the bottom of the interface."""
-        frame_buttons = ttk.Frame(self.root)
-        frame_buttons.pack(fill=tk.X, padx=10, pady=10)
+        # Explicitly create a frame with height to ensure visibility
+        frame_buttons = ttk.Frame(parent, height=50)
+        frame_buttons.pack(fill=tk.X)
+        frame_buttons.pack_propagate(False)  # Prevents the frame from shrinking
 
         # Status label
         ttk.Label(frame_buttons, textvariable=self.status_var).pack(side=tk.LEFT, padx=5)
@@ -114,6 +160,21 @@ class FileSelector:
                    command=lambda: self._process_files(process_callback)).pack(side=tk.RIGHT, padx=5)
         ttk.Button(frame_buttons, text="Confirm Selection",
                    command=self._confirm_selection).pack(side=tk.RIGHT, padx=5)
+
+    def _save_current_plot(self):
+        """Save the current plot to a file."""
+        if not hasattr(self, 'fig') or self.fig is None:
+            messagebox.showinfo("No Plot", "There is no plot to save.")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("All files", "*.*")]
+        )
+
+        if file_path:
+            self.fig.savefig(file_path, dpi=300, bbox_inches='tight')
+            messagebox.showinfo("Success", f"Plot saved to {file_path}")
 
     # Action Methods
     def _browse_directory(self):
@@ -256,5 +317,5 @@ if __name__ == "__main__":
 
 
     # Uncomment one of these to test different modes:
-    #files = select_ndax_files()  # Return mode
+    # files = select_ndax_files()  # Return mode
     select_ndax_files(callback=test_callback)  # Callback mode
