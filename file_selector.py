@@ -203,7 +203,6 @@ class FileSelector:
         return None
 
 
-#def select_ndax_files(initial_dir=None, advanced=True, callback=None):
 def select_ndax_files(initial_dir=None, callback=None):
     """
     Convenience function to select .ndax files using a GUI.
@@ -216,7 +215,6 @@ def select_ndax_files(initial_dir=None, callback=None):
         list: List of selected file paths if no callback is provided.
     """
     selector = FileSelector(initial_dir)
-
     return selector.select_files_with_preview(callback)
 
 
