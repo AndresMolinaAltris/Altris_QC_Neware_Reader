@@ -9,9 +9,10 @@ import time
 import os
 import pandas as pd
 from file_selector import select_ndax_files  # Import the new file selector
+from neware_plotter import NewarePlotter  # Import the plotter
 
 
-def process_files(ndax_file_list, db, output_file=None):
+def process_files(ndax_file_list, db, output_file=None, enable_plotting=True, save_plots_dir=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
 
@@ -19,6 +20,8 @@ def process_files(ndax_file_list, db, output_file=None):
         ndax_file_list (list): List of NDAX file paths to process
         db (CellDatabase): Instance of the cell database
         output_file (str, optional): Path to save the results
+        enable_plotting (bool): Whether to generate plots
+        save_plots_dir (str, optional): Directory to save plots
 
     Returns:
         pandas.DataFrame: DataFrame containing all extracted features
@@ -71,6 +74,16 @@ def process_files(ndax_file_list, db, output_file=None):
             print(f"Saving results to {output_file}...")
             final_features_df.to_excel(output_file, index=False)
 
+        # Generate plots if enabled
+        if enable_plotting and ndax_file_list:
+            try:
+                print("Generating capacity plots...")
+                plotter = NewarePlotter(db)
+                plotter.plot_ndax_files(ndax_file_list, save_dir=save_plots_dir)
+                print("Plotting complete.")
+            except Exception as e:
+                print(f"Error during plotting: {e}")
+
         return final_features_df
     else:
         print("No features extracted.")
@@ -87,6 +100,12 @@ def main():
     cell_database = config["cell_database_path"]
     use_gui = config.get("use_gui", True)  # Add a new config option for GUI
     output_file = config.get("output_file", "extracted_features.xlsx")
+    enable_plotting = config.get("enable_plotting", True)  # New config option for plotting
+    plots_dir = config.get("plots_directory", "plots")  # New config option for plot save directory
+
+    # Create plots directory if needed
+    if enable_plotting and not os.path.exists(plots_dir):
+        os.makedirs(plots_dir, exist_ok=True)
 
     # Load cell database with active mass (only once)
     print("Loading cell database...")
@@ -117,7 +136,15 @@ def main():
         # Process current batch of files
         batch_number = len(all_processed_features) + 1
         batch_output = f"batch_{batch_number}_{output_file}"
-        features_df = process_files(ndax_file_list, db, batch_output)
+
+        # Process files with plotting enabled
+        features_df = process_files(
+            ndax_file_list,
+            db,
+            batch_output,
+            enable_plotting=enable_plotting,
+            save_plots_dir=plots_dir
+        )
 
         if not features_df.empty:
             all_processed_features.append(features_df)
@@ -135,7 +162,6 @@ def main():
     select_ndax_files(initial_dir=data_path, callback=process_file_callback)
     # When the GUI is closed, we're done
     print("\nFile selection window closed. Processing complete.")
-
 
     # Combine all batches if there were multiple
     if len(all_processed_features) > 1:
