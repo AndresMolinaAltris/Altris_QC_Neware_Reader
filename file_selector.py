@@ -17,24 +17,24 @@ class FileSelector:
         self.initial_dir = initial_dir or os.getcwd()
         self.selected_files = []
 
-    def select_files(self):
-        """
-        Open a GUI file dialog for selecting .ndax files.
-
-        Returns:
-            list: List of selected file paths.
-        """
-        root = tk.Tk()
-        root.withdraw()  # Hide the main window
-
-        files = filedialog.askopenfilenames(
-            title="Select Neware NDAX Files",
-            initialdir=self.initial_dir,
-            filetypes=[("NDAX Files", "*.ndax"), ("All Files", "*.*")]
-        )
-
-        self.selected_files = [str(Path(file)) for file in files]
-        return self.selected_files
+    # def select_files(self):
+    #     """
+    #     Open a GUI file dialog for selecting .ndax files.
+    #
+    #     Returns:
+    #         list: List of selected file paths.
+    #     """
+    #     root = tk.Tk()
+    #     root.withdraw()  # Hide the main window
+    #
+    #     files = filedialog.askopenfilenames(
+    #         title="Select Neware NDAX Files",
+    #         initialdir=self.initial_dir,
+    #         filetypes=[("NDAX Files", "*.ndax"), ("All Files", "*.*")]
+    #     )
+    #
+    #     self.selected_files = [str(Path(file)) for file in files]
+    #     return self.selected_files
 
     def select_files_with_preview(self, process_callback=None):
         """
@@ -221,23 +221,25 @@ class FileSelector:
         return None
 
 
-def select_ndax_files(initial_dir=None, advanced=True, callback=None):
+#def select_ndax_files(initial_dir=None, advanced=True, callback=None):
+def select_ndax_files(initial_dir=None, callback=None):
     """
     Convenience function to select .ndax files using a GUI.
 
     Args:
         initial_dir (str, optional): Initial directory to open the file dialog.
-        advanced (bool, optional): Whether to use the advanced GUI with preview.
         callback (function, optional): Function to call when files are selected and confirmed.
 
     Returns:
         list: List of selected file paths if no callback is provided.
     """
     selector = FileSelector(initial_dir)
-    if advanced:
-        return selector.select_files_with_preview(callback)
-    else:
-        return selector.select_files()
+
+    return selector.select_files_with_preview(callback)
+    #if advanced:
+    #    return selector.select_files_with_preview(callback)
+    #else:
+    #    return selector.select_files()
 
 
 if __name__ == "__main__":
