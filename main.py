@@ -6,6 +6,7 @@ from cell_database import CellDatabase
 from statistical_analysis import *
 import openpyxl
 import yaml
+from file_selector import select_ndax_files  # Import the new file selector
 
 # Import configuration file
 with open("config.yaml", "r") as file:
@@ -13,10 +14,23 @@ with open("config.yaml", "r") as file:
 
 data_path = config["data_path"]
 cell_database = config["cell_database_path"]
+use_gui = config.get("use_gui", True)  # Add a new config option for GUI
 
-# Find Neware files
-ndax_file_list = find_ndax_files(data_path)
+# Get Neware files - either from GUI or file search
+if use_gui:
+    # Use GUI file selector
+    ndax_file_list = select_ndax_files(initial_dir=data_path)
+    if not ndax_file_list:
+        print("No files selected. Exiting...")
+        exit()
+else:
+    # Find all Neware files (original behavior)
+    ndax_file_list = find_ndax_files(data_path)
+    if not ndax_file_list:
+        print(f"No .ndax files found in {data_path}. Exiting...")
+        exit()
 
+print(f"Processing {len(ndax_file_list)} files...")
 
 # load cell database with active mass
 db = CellDatabase.get_instance()
@@ -52,7 +66,6 @@ for file in ndax_file_list:
         feature_df = features_obj.extract(df, cycle, mass)
 
         # Add file name and cycle number to the DataFrame
-        #feature_df["File"] = filename_stem
         feature_df["cell ID"] = cell_ID
         feature_df["sample  name"] = sample_name
         feature_df["Cycle"] = cycle
@@ -63,3 +76,10 @@ for file in ndax_file_list:
 
 # Combine all results into a single DataFrame
 final_features_df = pd.concat(all_features, ignore_index=True)
+
+# Save results to Excel file
+output_file = config.get("output_file", "extracted_features.xlsx")
+print(f"Saving results to {output_file}...")
+final_features_df.to_excel(output_file, index=False)
+
+print("Processing complete!")
