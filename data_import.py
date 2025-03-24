@@ -60,7 +60,6 @@ def extract_active_mass(file_path):
 
         return 1  # Return 1 in case of an error
 
-
 def extract_cell_id(filename):
     """
         Extracts the cell ID from a filename. It assumes the cell ID are the digits before the first
@@ -85,73 +84,9 @@ def extract_cell_id(filename):
         print(f"Error processing filename '{filename}': {e}")
         return None
 
-
 def extract_sample_name(filename):
     # Split on first occurrence of '_' or '-'
     parts = re.split(r'[_-]', filename, maxsplit=2)
 
     # Ensure there is a second group to return
     return parts[1] if len(parts) > 1 else None
-
-
-def find_active_mass(file_path, search_id):
-    search_id_str = str(search_id).strip()
-    required_cols = ['Name/ID', 'Active mass (mg)']
-
-    with pd.ExcelFile(file_path) as xls:
-        for sheet_name in xls.sheet_names:
-            # First, read only the column names to check if required columns exist
-            df_header = pd.read_excel(xls, sheet_name=sheet_name, nrows=0)
-            clean_cols = [col.strip() for col in df_header.columns]
-
-            # Skip sheets that don't have required columns
-            if not all(col in clean_cols for col in required_cols):
-                continue
-
-            # Get column indices for required columns
-            col_indices = [clean_cols.index(col) for col in required_cols]
-
-            # Read only required columns using usecols
-            df = pd.read_excel(
-                xls,
-                sheet_name=sheet_name,
-                usecols=col_indices,
-                dtype={col_indices[0]: str}  # Name/ID column as string
-            )
-
-            df.columns = required_cols  # Assign clean column names
-
-            # Find matching row without type conversion
-            mask = df['Name/ID'].str.strip() == search_id_str
-            match = df[mask]
-
-            if not match.empty:
-                try:
-                    # Process only the matching value
-                    value = match['Active mass (mg)'].iloc[0]
-                    if isinstance(value, str):
-                        value = value.replace(',', '.')
-                    return round(float(value) / 1000, 5)
-                except (ValueError, AttributeError):
-                    print(f"Conversion error: {value}")
-                    return None
-
-    return None
-
-
-def find_ndax_files(data_directory):
-    """
-    Recursively searches for .ndax files in the given directory.
-
-    Parameters:
-        data_directory (str): The path of the directory to search.
-
-    Returns:
-        list: A list of full file paths for all .ndax files found.
-    """
-    ndax_file_list = []
-    for root, _, files in os.walk(data_directory):
-        for filename in files:
-            if filename.endswith(".ndax"):
-                ndax_file_list.append(os.path.join(root, filename))
-    return ndax_file_list
