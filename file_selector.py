@@ -275,93 +275,32 @@ class FileSelector:
 
     def update_plot(self, fig):
         """Update the plot in the GUI with a new figure."""
-        # If we already have a figure and canvas
-        if hasattr(self, 'fig') and self.fig is not None and self.canvas is not None:
-            # Clear all axes in the existing figure
-            for ax in self.fig.get_axes():
-                ax.clear()
+        # Replace the entire figure instead of copying contents
+        if hasattr(self, 'canvas') and self.canvas is not None:
+            # Destroy existing canvas
+            self.canvas.get_tk_widget().destroy()
 
-            # Clear the figure entirely (removes all axes)
-            self.fig.clear()
+        # Find the plot frame if needed
+        if not hasattr(self, 'plot_frame'):
+            for child in self.root.winfo_children():
+                if isinstance(child, ttk.LabelFrame) and child.winfo_children():
+                    if child.cget('text') == "Plot Preview":
+                        self.plot_frame = child
+                        break
 
-            # Determine the subplot structure from the provided figure
-            num_subplots = len(fig.get_axes())
+        # Store the figure
+        self.fig = fig
 
-            # Recreate the same subplot structure in our figure
-            if num_subplots <= 1:
-                # Single plot
-                ax = self.fig.add_subplot(111)
-                source_ax = fig.get_axes()[0]
+        # Create a new canvas with the provided figure
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-                # Copy lines
-                for line in source_ax.lines:
-                    ax.plot(
-                        line.get_xdata(), line.get_ydata(),
-                        color=line.get_color(),
-                        linestyle=line.get_linestyle(),
-                        marker=line.get_marker(),
-                        alpha=line.get_alpha(),
-                        linewidth=line.get_linewidth()
-                    )
-
-                # Copy labels and title
-                ax.set_xlabel(source_ax.get_xlabel())
-                ax.set_ylabel(source_ax.get_ylabel())
-                ax.set_title(source_ax.get_title())
-
-                # Copy legend if it exists
-                if source_ax.get_legend() is not None:
-                    ax.legend()
-
-                # Copy grid settings
-                ax.grid(True)
-            else:
-                # Multiple plots (e.g., the three plots for cycles)
-                for i, source_ax in enumerate(fig.get_axes()):
-                    # Create a corresponding subplot in our figure with the same position
-                    ax = self.fig.add_subplot(1, num_subplots, i + 1)
-
-                    # Copy lines
-                    for line in source_ax.lines:
-                        ax.plot(
-                            line.get_xdata(), line.get_ydata(),
-                            color=line.get_color(),
-                            linestyle=line.get_linestyle(),
-                            marker=line.get_marker(),
-                            alpha=line.get_alpha(),
-                            linewidth=line.get_linewidth()
-                        )
-
-                    # Copy labels and title
-                    ax.set_xlabel(source_ax.get_xlabel())
-                    ax.set_ylabel(source_ax.get_ylabel())
-                    ax.set_title(source_ax.get_title())
-
-                    # Copy legend if it exists
-                    if source_ax.get_legend() is not None:
-                        ax.legend()
-
-                    # Copy grid settings
-                    ax.grid(True)
-
-            # Adjust layout and draw
-            self.fig.tight_layout()
-            self.canvas.draw()
-        else:
-            # If there's no figure yet, create one and the canvas
-            self.fig = fig
-
-            if not hasattr(self, 'plot_frame'):
-                for child in self.root.winfo_children():
-                    if isinstance(child, ttk.LabelFrame) and child.winfo_children():
-                        if child.cget('text') == "Plot Preview":
-                            self.plot_frame = child
-                            break
-
-            # Create the canvas in the plot frame
-            self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
-            self.canvas.draw()
-            self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        # Add toolbar if needed
+        if not any(isinstance(child, NavigationToolbar2Tk) for child in self.plot_frame.winfo_children()):
+            toolbar_frame = ttk.Frame(self.plot_frame)
+            toolbar_frame.pack(fill=tk.X, side=tk.BOTTOM)
+            NavigationToolbar2Tk(self.canvas, toolbar_frame)
 
     # Add this to FileSelector class
     def display_matplotlib_figure(self, fig):

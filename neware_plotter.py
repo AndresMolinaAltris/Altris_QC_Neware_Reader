@@ -93,7 +93,7 @@ class NewarePlotter:
 
     def create_plot(self, files_data, cycles=None, save_dir=None, display_plot=False):
         """
-        Creates plots for the specified files and cycles.
+        Creates plots for the specified files and cycles with optimized legend placement.
 
         Generates a figure with three subplots (one for each cycle), showing
         voltage vs. specific capacity curves for both charge and discharge.
@@ -108,25 +108,26 @@ class NewarePlotter:
 
         Returns:
             list: Paths to the saved plot files, or empty list if no plots were saved
-
-        Note:
-            The plot is displayed using `plt.show()`, which will block execution
-            until the plot window is closed if run in an interactive environment.
         """
         if cycles is None:
             cycles = SELECTED_CYCLES
 
         saved_files = []
 
-        # Create a single row of 3 plots for individual cycles
-        fig, axs = plt.subplots(1, 3, figsize=(15, 7))
+        # Create a figure with a 2x2 grid - the top row will have 3 plots side by side,
+        # and the bottom row will be used for the legend
+        fig = plt.figure(figsize=(15, 5))  # Increased height slightly
+
+        # Create a grid layout with more control
+        import matplotlib.gridspec as gridspec
+        gs = gridspec.GridSpec(2, 3, height_ratios=[4, 0.2])  # 2 rows, 3 columns, with top row 4x taller
 
         # Dictionary to store handles for the legend
         legend_handles = {}
 
         # Plot individual cycles
         for idx, cycle in enumerate(cycles[:3]):  # Up to 3 individual cycles
-            ax = axs[idx]
+            ax = fig.add_subplot(gs[0, idx])  # Place in top row
 
             for file_idx, (file_name, data) in enumerate(files_data.items()):
                 color = self.colors[file_idx % len(self.colors)]
@@ -155,16 +156,18 @@ class NewarePlotter:
             ax.grid(True)
             ax.set_xlim(left=0)
 
-        # Add legend with sample names
+        # Create a legend axis spanning the bottom row
+        legend_ax = fig.add_subplot(gs[1, :])
+        legend_ax.axis('off')  # Hide the axis
+
+        # Add legend with sample names to the dedicated legend axis
         sample_handles = list(legend_handles.values())
         sample_labels = list(legend_handles.keys())
 
-        # Place legend below the plots
-        fig.legend(handles=sample_handles, labels=sample_labels,
-                   loc='lower center', ncol=len(sample_handles), bbox_to_anchor=(0.5, 0.02))
+        legend_ax.legend(handles=sample_handles, labels=sample_labels,
+                         loc='center', ncol=len(sample_handles))
 
         plt.tight_layout()
-        plt.subplots_adjust(bottom=0.15)  # Make room for the legend
 
         # Save figure if a directory is provided. Filename with timestamp.
         if save_dir:
@@ -181,6 +184,7 @@ class NewarePlotter:
             plt.close(fig)
 
         return fig, saved_files
+
 
     def plot_ndax_files(self, file_paths, cycles=None, save_dir=None, preprocessed_data=None,
                         display_plot=False, gui_callback=None):
