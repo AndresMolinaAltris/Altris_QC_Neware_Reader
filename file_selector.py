@@ -27,7 +27,7 @@ class FileSelector:
         # Create and configure the main window
         self.root = tk.Tk()
         self.root.title("Neware NDAX File Selector")
-        self.root.geometry("800x800")  # Increased height
+        self.root.geometry("1000x800")  # Increased height
 
         # Initialize variables
         self.selected_files = []
