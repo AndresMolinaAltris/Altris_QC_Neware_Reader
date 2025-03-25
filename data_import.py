@@ -2,8 +2,6 @@ import re
 import NewareNDA
 import logging
 from io import StringIO
-import pandas as pd
-import os
 
 
 def extract_active_mass(file_path):

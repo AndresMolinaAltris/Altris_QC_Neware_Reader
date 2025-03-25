@@ -8,8 +8,8 @@ import yaml
 import time
 import os
 import pandas as pd
-from file_selector import select_ndax_files, FileSelector  # Import FileSelector class
-from neware_plotter import NewarePlotter  # Import the plotter
+from file_selector import FileSelector
+from neware_plotter import NewarePlotter
 
 
 def process_files(ndax_file_list, db, output_file=None, enable_plotting=True, save_plots_dir=None, gui_callback=None):
@@ -202,7 +202,6 @@ def main():
     # Main processing path based on configuration
     # Use GUI file selector with callback to process files
     print("Opening file selector. Please select files and click 'Process Files' button when ready.")
-    #file_selector_instance.show_interface(callback=process_file_callback)
     file_selector_instance.show_interface(process_callback=process_file_callback)
     # When the GUI is closed, we're done
     print("\nFile selection window closed. Processing complete.")
