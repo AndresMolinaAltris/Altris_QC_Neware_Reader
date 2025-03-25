@@ -91,7 +91,7 @@ class NewarePlotter:
             print(f"Error processing file for plotting {file_path}: {e}")
             return None, None
 
-    def create_plot(self, files_data, cycles=None, save_dir=None):
+    def create_plot(self, files_data, cycles=None, save_dir=None, display_plot=False):
         """
         Creates plots for the specified files and cycles.
 
@@ -175,10 +175,17 @@ class NewarePlotter:
             saved_files.append(save_path)
             print(f"Plot saved to: {save_path}")
 
-        plt.show()
-        return saved_files
+        #plt.show()
+        if display_plot:
+            plt.show()
+        else:
+            plt.close(fig)
 
-    def plot_ndax_files(self, file_paths, cycles=None, save_dir=None, preprocessed_data=None):
+        #return saved_files
+        return fig, saved_files
+
+    def plot_ndax_files(self, file_paths, cycles=None, save_dir=None, preprocessed_data=None,
+                        display_plot=False, gui_callback=None):
         """
             Process and plot multiple NDAX files, showing capacity curves for specified cycles.
 
@@ -243,7 +250,14 @@ class NewarePlotter:
             return []
 
         # Create and save plots
-        return self.create_plot(files_data, cycles, save_dir)
+        fig, saved_files = self.create_plot(files_data, cycles, save_dir, display_plot)
+
+        # If a GUI callback was provided, send the figure to it
+        if gui_callback and fig is not None:
+            gui_callback(fig)
+
+        #return self.create_plot(files_data, cycles, save_dir)
+        return fig, saved_files
 
 
 # Example usage

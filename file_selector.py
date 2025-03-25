@@ -299,10 +299,39 @@ class FileSelector:
         else:
             # If there's no figure yet, create one
             self.fig = fig
+
+            if not hasattr(self, 'plot_frame'):
+                for child in self.root.winfo_children():
+                    if isinstance(child, ttk.LabelFrame) and child.winfo_children():
+                        if child.cget('text') == "Plot Preview":
+                            self.plot_frame = child
+                            break
+
+                # Create the canvas in the plot frame
             self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
             self.canvas.draw()
             self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+            #self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
+            #self.canvas.draw()
+            #self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # Add this to FileSelector class
+    def display_matplotlib_figure(self, fig):
+        """Display a matplotlib figure in the plot preview area."""
+        # Clear any existing plot
+        for widget in self.plot_frame.winfo_children():
+            widget.destroy()
+
+        # Create a new canvas with the figure
+        canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Add navigation toolbar
+        toolbar_frame = ttk.Frame(self.plot_frame)
+        toolbar_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        NavigationToolbar2Tk(canvas, toolbar_frame)
 
 # Convenience function for easier access
 def select_ndax_files(initial_dir=None, callback=None):

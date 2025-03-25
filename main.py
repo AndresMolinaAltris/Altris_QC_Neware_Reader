@@ -8,11 +8,11 @@ import yaml
 import time
 import os
 import pandas as pd
-from file_selector import select_ndax_files  # Import the new file selector
+from file_selector import select_ndax_files, FileSelector  # Import FileSelector class
 from neware_plotter import NewarePlotter  # Import the plotter
 
 
-def process_files(ndax_file_list, db, output_file=None, enable_plotting=True, save_plots_dir=None):
+def process_files(ndax_file_list, db, output_file=None, enable_plotting=True, save_plots_dir=None, gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
 
@@ -26,16 +26,12 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True, sa
         output_file (str, optional): Path to save the results Excel file
         enable_plotting (bool): Whether to generate capacity plots
         save_plots_dir (str, optional): Directory to save generated plots
+        gui_callback (callable, optional): Function to call with the figure for GUI display
 
     Returns:
         pandas.DataFrame: DataFrame containing all extracted features with columns for
                          cell ID, sample name, cycle number, and various electrochemical
                          parameters (capacities, internal resistances, etc.)
-
-    Example:
-        >>> db = CellDatabase.get_instance()
-        >>> db.load_database("cell_database.xlsx")
-        >>> df = process_files(["file1.ndax", "file2.ndax"], db, "results.xlsx")
     """
     # Initialize an empty DataFrame to store extracted features
     all_features = []
@@ -90,7 +86,16 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True, sa
             try:
                 print("Generating capacity plots...")
                 plotter = NewarePlotter(db)
-                plotter.plot_ndax_files(ndax_file_list, save_dir=save_plots_dir)
+                fig, _ = plotter.plot_ndax_files(
+                    ndax_file_list,
+                    save_dir=save_plots_dir,
+                    display_plot=False  # Don't show in separate window
+                )
+
+                # If we have a GUI callback and a figure was created, update the GUI
+                if gui_callback and fig:
+                    gui_callback(fig)
+
                 print("Plotting complete.")
             except Exception as e:
                 print(f"Error during plotting: {e}")
@@ -142,6 +147,9 @@ def main():
     # Keep all processed features
     all_processed_features = []
 
+    # Create the file selector instance
+    file_selector_instance = FileSelector(initial_dir=data_path)
+
     # Define a callback function to process files
     def process_file_callback(ndax_file_list):
         """
@@ -177,7 +185,8 @@ def main():
             db,
             batch_output,
             enable_plotting=enable_plotting,
-            save_plots_dir=plots_dir
+            save_plots_dir=plots_dir,
+            gui_callback=file_selector_instance.update_plot if enable_plotting else None
         )
 
         if not features_df.empty:
@@ -193,7 +202,8 @@ def main():
     # Main processing path based on configuration
     # Use GUI file selector with callback to process files
     print("Opening file selector. Please select files and click 'Process Files' button when ready.")
-    select_ndax_files(initial_dir=data_path, callback=process_file_callback)
+    #file_selector_instance.show_interface(callback=process_file_callback)
+    file_selector_instance.show_interface(process_callback=process_file_callback)
     # When the GUI is closed, we're done
     print("\nFile selection window closed. Processing complete.")
 
@@ -204,7 +214,7 @@ def main():
         final_df.to_excel(output_file, index=False)
         print(f"All results combined and saved to {output_file}")
     elif len(all_processed_features) == 1:
-        print(f"\nProcessing complete. Results saved to {batch_output}")
+        print(f"\nProcessing complete. Results saved to batch_{len(all_processed_features)}_{output_file}")
     else:
         print("\nNo files were processed.")
 
