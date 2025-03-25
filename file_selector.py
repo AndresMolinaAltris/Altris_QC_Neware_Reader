@@ -275,28 +275,80 @@ class FileSelector:
 
     def update_plot(self, fig):
         """Update the plot in the GUI with a new figure."""
-        # Clear the current figure and plot the new one
-        if hasattr(self, 'fig') and self.fig is not None:
+        # If we already have a figure and canvas
+        if hasattr(self, 'fig') and self.fig is not None and self.canvas is not None:
+            # Clear all axes in the existing figure
             for ax in self.fig.get_axes():
                 ax.clear()
 
-            # Copy the content from the provided figure
-            for ax_new in fig.get_axes():
+            # Clear the figure entirely (removes all axes)
+            self.fig.clear()
+
+            # Determine the subplot structure from the provided figure
+            num_subplots = len(fig.get_axes())
+
+            # Recreate the same subplot structure in our figure
+            if num_subplots <= 1:
+                # Single plot
                 ax = self.fig.add_subplot(111)
-                for line in ax_new.lines:
-                    ax.plot(line.get_xdata(), line.get_ydata(),
-                            color=line.get_color(), linestyle=line.get_linestyle())
+                source_ax = fig.get_axes()[0]
 
-                ax.set_xlabel(ax_new.get_xlabel())
-                ax.set_ylabel(ax_new.get_ylabel())
-                ax.set_title(ax_new.get_title())
-                if ax_new.get_legend() is not None:
+                # Copy lines
+                for line in source_ax.lines:
+                    ax.plot(
+                        line.get_xdata(), line.get_ydata(),
+                        color=line.get_color(),
+                        linestyle=line.get_linestyle(),
+                        marker=line.get_marker(),
+                        alpha=line.get_alpha(),
+                        linewidth=line.get_linewidth()
+                    )
+
+                # Copy labels and title
+                ax.set_xlabel(source_ax.get_xlabel())
+                ax.set_ylabel(source_ax.get_ylabel())
+                ax.set_title(source_ax.get_title())
+
+                # Copy legend if it exists
+                if source_ax.get_legend() is not None:
                     ax.legend()
-                ax.grid(True)
 
+                # Copy grid settings
+                ax.grid(True)
+            else:
+                # Multiple plots (e.g., the three plots for cycles)
+                for i, source_ax in enumerate(fig.get_axes()):
+                    # Create a corresponding subplot in our figure with the same position
+                    ax = self.fig.add_subplot(1, num_subplots, i + 1)
+
+                    # Copy lines
+                    for line in source_ax.lines:
+                        ax.plot(
+                            line.get_xdata(), line.get_ydata(),
+                            color=line.get_color(),
+                            linestyle=line.get_linestyle(),
+                            marker=line.get_marker(),
+                            alpha=line.get_alpha(),
+                            linewidth=line.get_linewidth()
+                        )
+
+                    # Copy labels and title
+                    ax.set_xlabel(source_ax.get_xlabel())
+                    ax.set_ylabel(source_ax.get_ylabel())
+                    ax.set_title(source_ax.get_title())
+
+                    # Copy legend if it exists
+                    if source_ax.get_legend() is not None:
+                        ax.legend()
+
+                    # Copy grid settings
+                    ax.grid(True)
+
+            # Adjust layout and draw
+            self.fig.tight_layout()
             self.canvas.draw()
         else:
-            # If there's no figure yet, create one
+            # If there's no figure yet, create one and the canvas
             self.fig = fig
 
             if not hasattr(self, 'plot_frame'):
@@ -306,14 +358,10 @@ class FileSelector:
                             self.plot_frame = child
                             break
 
-                # Create the canvas in the plot frame
+            # Create the canvas in the plot frame
             self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
             self.canvas.draw()
             self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-            #self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
-            #self.canvas.draw()
-            #self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     # Add this to FileSelector class
     def display_matplotlib_figure(self, fig):

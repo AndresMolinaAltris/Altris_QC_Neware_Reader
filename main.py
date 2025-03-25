@@ -12,7 +12,8 @@ from file_selector import FileSelector
 from neware_plotter import NewarePlotter
 
 
-def process_files(ndax_file_list, db, output_file=None, enable_plotting=True, save_plots_dir=None, gui_callback=None):
+def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
+                  save_plots_dir=None, gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
 
@@ -179,14 +180,16 @@ def main():
         batch_number = len(all_processed_features) + 1
         batch_output = f"batch_{batch_number}_{output_file}"
 
-        # Process files with plotting enabled
+        # Process files with plotting enabled. This is the part that send the plot
+        # to the GUI though the callback (gui_callback)
         features_df = process_files(
             ndax_file_list,
             db,
             batch_output,
             enable_plotting=enable_plotting,
             save_plots_dir=plots_dir,
-            gui_callback=file_selector_instance.update_plot if enable_plotting else None
+            #gui_callback=file_selector_instance.update_plot if enable_plotting else None
+            gui_callback = file_selector_instance.update_plot
         )
 
         if not features_df.empty:
