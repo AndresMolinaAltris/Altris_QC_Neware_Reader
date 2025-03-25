@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import os
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 
@@ -134,15 +134,12 @@ class FileSelector:
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, side=tk.TOP)
 
-        # Add a toolbar for basic navigation
-        toolbar_frame = ttk.Frame(parent)
-        toolbar_frame.pack(fill=tk.X, side=tk.BOTTOM)
-
-        toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
-        toolbar.update()
+        # Add a frame for the Save Plot button without toolbar
+        button_frame = ttk.Frame(parent)
+        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
         # Add Save Plot button
-        save_plot_button = ttk.Button(toolbar_frame, text="Save Plot", command=self._save_current_plot)
+        save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
         save_plot_button.pack(side=tk.RIGHT, padx=5)
 
     def _save_current_plot(self):
@@ -296,11 +293,12 @@ class FileSelector:
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Add toolbar if needed
-        if not any(isinstance(child, NavigationToolbar2Tk) for child in self.plot_frame.winfo_children()):
-            toolbar_frame = ttk.Frame(self.plot_frame)
-            toolbar_frame.pack(fill=tk.X, side=tk.BOTTOM)
-            NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        # We're not adding a toolbar, but we might need a save button
+        if not any(isinstance(child, ttk.Frame) for child in self.plot_frame.winfo_children()):
+            button_frame = ttk.Frame(self.plot_frame)
+            button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+            save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
+            save_plot_button.pack(side=tk.RIGHT, padx=5)
 
     # Add this to FileSelector class
     def display_matplotlib_figure(self, fig):
@@ -314,10 +312,13 @@ class FileSelector:
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Add navigation toolbar
-        toolbar_frame = ttk.Frame(self.plot_frame)
-        toolbar_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        NavigationToolbar2Tk(canvas, toolbar_frame)
+        # Add a frame for the Save Plot button without toolbar
+        button_frame = ttk.Frame(self.plot_frame)
+        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # Add Save Plot button
+        save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
+        save_plot_button.pack(side=tk.RIGHT, padx=5)
 
 # Convenience function for easier access
 def select_ndax_files(initial_dir=None, callback=None):
