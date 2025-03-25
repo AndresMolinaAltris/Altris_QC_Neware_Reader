@@ -272,11 +272,6 @@ class FileSelector:
 
     def update_plot(self, fig):
         """Update the plot in the GUI with a new figure."""
-        # Replace the entire figure instead of copying contents
-        if hasattr(self, 'canvas') and self.canvas is not None:
-            # Destroy existing canvas
-            self.canvas.get_tk_widget().destroy()
-
         # Find the plot frame if needed
         if not hasattr(self, 'plot_frame'):
             for child in self.root.winfo_children():
@@ -285,20 +280,32 @@ class FileSelector:
                         self.plot_frame = child
                         break
 
-        # Store the figure
+        # Completely clear the plot frame first
+        for widget in self.plot_frame.winfo_children():
+            widget.destroy()
+
+        # Store the new figure with a consistent size
         self.fig = fig
 
-        # Create a new canvas with the provided figure
+        # Create a new canvas with the figure
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
+
+        # Make sure the figure fits properly in the available space
+        self.fig.tight_layout()
+
+        # Draw the canvas
         self.canvas.draw()
+
+        # Pack the canvas to fill the available space
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # We're not adding a toolbar, but we might need a save button
-        if not any(isinstance(child, ttk.Frame) for child in self.plot_frame.winfo_children()):
-            button_frame = ttk.Frame(self.plot_frame)
-            button_frame.pack(fill=tk.X, side=tk.BOTTOM)
-            save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
-            save_plot_button.pack(side=tk.RIGHT, padx=5)
+        # Create a button frame
+        button_frame = ttk.Frame(self.plot_frame)
+        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # Add Save Plot button
+        save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
+        save_plot_button.pack(side=tk.RIGHT, padx=5)
 
     # Add this to FileSelector class
     def display_matplotlib_figure(self, fig):
