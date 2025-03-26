@@ -404,18 +404,3 @@ def select_ndax_files(initial_dir=None, callback=None):
     """
     selector = FileSelector(initial_dir)
     return selector.show_interface(callback)
-
-
-if __name__ == "__main__":
-    # Test the file selector
-    def test_callback(files):
-        print(f"Received {len(files)} files in callback.")
-        for f in files[:3]:  # Show first 3 files
-            print(f"  - {f}")
-        if len(files) > 3:
-            print(f"  - ... and {len(files) - 3} more")
-
-
-    # Uncomment one of these to test different modes:
-    # files = select_ndax_files()  # Return mode
-    select_ndax_files(callback=test_callback)  # Callback mode

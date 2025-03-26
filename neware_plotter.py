@@ -225,28 +225,3 @@ class NewarePlotter:
             gui_callback(fig)
 
         return fig
-
-
-if __name__ == "__main__":
-    plotter = NewarePlotter()
-
-    # Example: Select files and plot them
-    from tkinter import Tk, filedialog
-
-    Tk().withdraw()
-    file_paths = filedialog.askopenfilenames(title="Select NDAX Files", filetypes=[("NDAX Files", "*.ndax")])
-
-    if file_paths:
-        # Initialize and load database if needed
-        db = CellDatabase.get_instance()
-        if not db._is_loaded:
-            db_path = filedialog.askopenfilename(title="Select Cell Database", filetypes=[("Excel Files", "*.xlsx")])
-            if db_path:
-                db.load_database(db_path)
-            else:
-                print("No database selected, using mass=1.0g for all cells")
-
-        # Plot the files
-        plotter.plot_ndax_files(file_paths, save_dir="./plots")
-    else:
-        print("No files selected.")
