@@ -28,6 +28,7 @@ class FileSelector:
         self.root = tk.Tk()
         self.root.title("Neware NDAX File Selector")
         self.root.geometry("1000x800")  # Increased height
+        self.root.minsize(900, 750)  # Minimum width and height
 
         # Initialize variables
         self.selected_files = []
@@ -52,11 +53,15 @@ class FileSelector:
         # Create file lists frame in row 1
         file_frame = ttk.Frame(self.root)
         file_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        file_frame.grid_propagate(False)  # Prevent frame from resizing based on content
+        file_frame.config(height=200)  # Fixed height for file lists section
         self._create_file_lists(file_frame)
 
         # Create plot area in row 2
         plot_frame = ttk.LabelFrame(self.root, text="Plot Preview")
         plot_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        plot_frame.grid_propagate(False)
+        plot_frame.config(height=400)
         self._create_plot_area(plot_frame)
 
         # Create buttons in row 3
@@ -128,19 +133,24 @@ class FileSelector:
 
     def _create_plot_area(self, parent):
         """Create the plotting area within the GUI."""
-        # Create a Figure and add it to a canvas
-        self.fig = Figure(figsize=(8, 4))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=parent)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, side=tk.TOP)
-
-        # Add a frame for the Save Plot button without toolbar
-        button_frame = ttk.Frame(parent)
-        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        # Create a container frame with fixed height for the button
+        button_container = ttk.Frame(parent, height=40)
+        button_container.pack(side=tk.BOTTOM, fill=tk.X)
+        button_container.pack_propagate(False)  # Prevent shrinking
 
         # Add Save Plot button
-        save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
-        save_plot_button.pack(side=tk.RIGHT, padx=5)
+        save_plot_button = ttk.Button(button_container, text="Save Plot", command=self._save_current_plot)
+        save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
+
+        # Create a Figure and add it to a canvas
+        plot_container = ttk.Frame(parent)
+        plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+
+        self.fig = Figure(figsize=(8, 4))
+        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
 
     def _save_current_plot(self):
         """Save the current plot to a file."""
@@ -287,8 +297,21 @@ class FileSelector:
         # Store the new figure with a consistent size
         self.fig = fig
 
+        # Create a fixed-height button container at the bottom
+        button_container = ttk.Frame(self.plot_frame, height=40)
+        button_container.pack(side=tk.BOTTOM, fill=tk.X)
+        button_container.pack_propagate(False)  # Prevent shrinking
+
+        # Add Save Plot button
+        save_plot_button = ttk.Button(button_container, text="Save Plot", command=self._save_current_plot)
+        save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
+
+        # Create plot container for the canvas
+        plot_container = ttk.Frame(self.plot_frame)
+        plot_container.pack(fill=tk.BOTH, expand=True)
+
         # Create a new canvas with the figure
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
 
         # Make sure the figure fits properly in the available space
         self.fig.tight_layout()
@@ -299,13 +322,6 @@ class FileSelector:
         # Pack the canvas to fill the available space
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Create a button frame
-        button_frame = ttk.Frame(self.plot_frame)
-        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
-
-        # Add Save Plot button
-        save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
-        save_plot_button.pack(side=tk.RIGHT, padx=5)
 
     # Add this to FileSelector class
     def display_matplotlib_figure(self, fig):
