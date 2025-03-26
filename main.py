@@ -3,13 +3,13 @@ import features
 import NewareNDA
 from pathlib import Path
 from cell_database import CellDatabase
-import openpyxl
 import yaml
 import time
 import os
 import pandas as pd
 from file_selector import FileSelector
 from neware_plotter import NewarePlotter
+import logging
 from logger_configurator import configure_logging
 
 # Define the path where all the python files are located. This is the directory where the logging
@@ -176,6 +176,8 @@ def main():
         Args:
             ndax_file_list (list): List of paths to NDAX files to process
         """
+
+        logging.debug("MAIN.process_file_callback func started")
         nonlocal all_processed_features
 
         if not ndax_file_list:
@@ -183,11 +185,11 @@ def main():
             return
 
         # Display summary of selected files
-        print(f"\nProcessing {len(ndax_file_list)} files:")
+        logging.debug(f"MAIN.Processing {len(ndax_file_list)} files:")
         for i, file in enumerate(ndax_file_list[:5], 1):  # Show first 5 files
-            print(f"  {i}. {os.path.basename(file)}")
+            logging.debug(f"MAIN. {i}. {os.path.basename(file)}")
         if len(ndax_file_list) > 5:
-            print(f"  ... and {len(ndax_file_list) - 5} more files")
+            logging.debug(f"MAIN.  ... and {len(ndax_file_list) - 5} more files")
 
         # Process current batch of files
         batch_number = len(all_processed_features) + 1
@@ -195,25 +197,25 @@ def main():
 
         # Process files with plotting enabled. This is the part that send the plot
         # to the GUI though the callback (gui_callback)
+        logging.debug("MAIN.Sending plot to GUI.")
         features_df = process_files(
             ndax_file_list,
             db,
             batch_output,
             enable_plotting=enable_plotting,
             save_plots_dir=plots_dir,
-            #gui_callback=file_selector_instance.update_plot if enable_plotting else None
             gui_callback = file_selector_instance.update_plot
         )
 
         if not features_df.empty:
             all_processed_features.append(features_df)
-            print(f"Batch {batch_number} processed successfully. Results saved to {batch_output}")
+            logging.debug(f"MAIN.Batch {batch_number} processed successfully. Results saved to {batch_output}")
 
             # Combine all batches processed so far
             if len(all_processed_features) > 1:
                 combined_df = pd.concat(all_processed_features, ignore_index=True)
                 combined_df.to_excel(output_file, index=False)
-                print(f"All results combined and saved to {output_file}")
+                logging.debug(f"MAIN.All results combined and saved to {output_file}")
 
     # Main processing path based on configuration
     logging.debug("MAIN. Opening file selector")
@@ -234,7 +236,6 @@ def main():
         logging.debug("MAIN.No files were processed.")
 
     logging.debug("MAIN.Program complete.")
-
 
 if __name__ == "__main__":
     main()

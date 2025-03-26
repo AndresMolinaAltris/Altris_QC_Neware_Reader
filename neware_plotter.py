@@ -58,10 +58,11 @@ class NewarePlotter:
             tuple: (file_name, DataFrame) containing the processed data
         """
 
+        logging.debug("NEWARE_PLOTTER.preprocess_ndax_files func started.")
         cycles = SELECTED_CYCLES
 
         try:
-            print(f"Processing file for plotting: {file_path}...")
+            logging.debug(f"NEWARE_PLOTTER.Processing file for plotting: {file_path}...")
             # Extract cell ID from the filename
             filename_stem = os.path.basename(file_path).split(".")[0]
             cell_id = extract_cell_id(filename_stem)
@@ -69,7 +70,7 @@ class NewarePlotter:
             # Get active mass from database
             mass = self.db.get_mass(cell_id)
             if mass is None:
-                print(f"Warning: No mass found for cell ID {cell_id}, using 1.0g")
+                logging.debug(f"NEWARE_PLOTTER.Warning: No mass found for cell ID {cell_id}, using 1.0g")
                 mass = 1.0
 
             # Read data
@@ -83,11 +84,12 @@ class NewarePlotter:
             plot_data['Specific_Charge_Capacity(mAh/g)'] = plot_data['Charge_Capacity(mAh)'] / mass
             plot_data['Specific_Discharge_Capacity(mAh/g)'] = plot_data['Discharge_Capacity(mAh)'] / mass
 
-            print(f"File processed successfully for plotting: {file_path}")
+            logging.debug(f"NEWARE_PLOTTER.File processed successfully for plotting: {file_path}")
+
             return filename_stem, plot_data
 
         except Exception as e:
-            print(f"Error processing file for plotting {file_path}: {e}")
+            logging.debug(f"NEWARE_PLOTTER.Error processing file for plotting {file_path}: {e}")
             return None, None
 
     def create_plot(self, files_data, display_plot=False):
@@ -181,7 +183,7 @@ class NewarePlotter:
         Returns:
             fig: The matplotlib figure object
         """
-        #if cycles is None:
+        logging.debug("NEWARE_PLOTTER.plot_ndax_files func started.")
         cycles = SELECTED_CYCLES
 
         # Process all files
@@ -189,6 +191,7 @@ class NewarePlotter:
 
         # If we have preprocessed data, use it
         if preprocessed_data:
+            logging.debug("NEWARE_PLOTTER.plot_ndax_files preprocessed data")
             for file_name, data in preprocessed_data.items():
                 # Filter data for plotting
                 plot_data = data[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']]
@@ -205,12 +208,15 @@ class NewarePlotter:
                 if 'Specific_Discharge_Capacity(mAh/g)' not in plot_data.columns:
                     plot_data['Specific_Discharge_Capacity(mAh/g)'] = plot_data['Discharge_Capacity(mAh)'] / mass
 
+                logging.debug("NEWARE_PLOTTER.plot_ndax_files preprocessed data finished")
                 files_data[file_name] = plot_data
         else:
             # Process files normally if no preprocessed data
+            logging.debug("NEWARE_PLOTTER.plot_ndax_files no preprocessed data")
             for file_path in file_paths:
                 file_name, processed_data = self.preprocess_ndax_file(file_path)
                 if processed_data is not None:
+                    logging.debug("NEWARE_PLOTTER.plot_ndax_files no preprocessed data finished")
                     files_data[file_name] = processed_data
 
         if not files_data:
@@ -224,4 +230,5 @@ class NewarePlotter:
         if gui_callback and fig is not None:
             gui_callback(fig)
 
+        logging.debug("NEWARE_PLOTTER.plot_ndax_files func finished")
         return fig
