@@ -195,7 +195,7 @@ class NewarePlotter:
 
         # If we have preprocessed data, use it
         if preprocessed_data:
-            logging.debug("NEWARE_PLOTTER.plot_ndax_files preprocessed data")
+            logging.debug("NEWARE_PLOTTER.plot_ndax_files using preprocessed data")
             for file_name, data in preprocessed_data.items():
                 # Filter data for plotting
                 plot_data = data[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']]
@@ -212,15 +212,15 @@ class NewarePlotter:
                 if 'Specific_Discharge_Capacity(mAh/g)' not in plot_data.columns:
                     plot_data['Specific_Discharge_Capacity(mAh/g)'] = plot_data['Discharge_Capacity(mAh)'] / mass
 
-                logging.debug("NEWARE_PLOTTER.plot_ndax_files preprocessed data finished")
+                logging.debug(f"NEWARE_PLOTTER.Processed cached data for {file_name}")
                 files_data[file_name] = plot_data
         else:
             # Process files normally if no preprocessed data
-            logging.debug("NEWARE_PLOTTER.plot_ndax_files no preprocessed data")
+            logging.debug("NEWARE_PLOTTER.plot_ndax_files no preprocessed data, reading files")
             for file_path in file_paths:
                 file_name, processed_data = self.preprocess_ndax_file(file_path)
                 if processed_data is not None:
-                    logging.debug("NEWARE_PLOTTER.plot_ndax_files no preprocessed data finished")
+                    logging.debug(f"NEWARE_PLOTTER.Processed file: {file_name}")
                     files_data[file_name] = processed_data
 
         if not files_data:

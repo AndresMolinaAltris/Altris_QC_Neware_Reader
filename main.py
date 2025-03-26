@@ -1,5 +1,4 @@
 import sys
-from pathlib import Path
 from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA
 from common.project_imports import (
     extract_cell_id, extract_sample_name, Features,
@@ -25,29 +24,14 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
                   save_plots_dir=None, gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
-
-    Extracts electrochemical features from cycles 1-3 of each NDAX file,
-    using cell mass data from the database. Optionally saves results to an
-    Excel file and generates capacity plots.
-
-    Args:
-        ndax_file_list (list): List of paths to NDAX files to process
-        db (CellDatabase): Instance of the cell database for mass lookup
-        output_file (str, optional): Path to save the results Excel file
-        enable_plotting (bool): Whether to generate capacity plots
-        save_plots_dir (str, optional): Directory to save generated plots
-        gui_callback (callable, optional): Function to call with the figure for GUI display
-
-    Returns:
-        pandas.DataFrame: DataFrame containing all extracted features with columns for
-                         cell ID, sample name, cycle number, and various electrochemical
-                         parameters (capacities, internal resistances, etc.)
     """
-
     logging.debug("MAIN. process_files started")
 
     # Initialize an empty DataFrame to store extracted features
     all_features = []
+
+    # Create a cache for the processed NDAX files
+    ndax_data_cache = {}
 
     # Process each file
     for file in ndax_file_list:
@@ -58,8 +42,12 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
         sample_name = extract_sample_name(filename_stem)
         logging.debug(f"Main.Processing sample: {sample_name}")
 
-        # Read data from Neware NDA file
+        # Read data from Neware NDA file - only once
+        logging.debug(f"MAIN.Reading file: {file}")
         df = NewareNDA.read(file)
+
+        # Store the processed data in the cache
+        ndax_data_cache[filename_stem] = df
 
         # Extract active mass
         mass = db.get_mass(cell_ID)
@@ -95,14 +83,15 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
             final_features_df.to_excel(output_file, index=False)
 
         # Generate plots if enabled
-        # In main.py process_files function
         if enable_plotting and ndax_file_list:
             try:
                 logging.debug("MAIN.Generating capacity plots...")
                 plotter = NewarePlotter(db)
+                # Pass the cached data to avoid reading files again
                 fig = plotter.plot_ndax_files(
                     ndax_file_list,
-                    display_plot=False,  # Don't show in separate window
+                    preprocessed_data=ndax_data_cache,  # Pass the cache here
+                    display_plot=False,
                     gui_callback=gui_callback
                 )
                 logging.debug("MAIN.Plotting complete.")
@@ -114,7 +103,6 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
         return final_features_df
     else:
         logging.debug("MAIN.No features extracted, process_files func finished.")
-
         return pd.DataFrame()
 
 
