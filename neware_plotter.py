@@ -91,7 +91,7 @@ class NewarePlotter:
             print(f"Error processing file for plotting {file_path}: {e}")
             return None, None
 
-    def create_plot(self, files_data, cycles=None, save_dir=None, display_plot=False):
+    def create_plot(self, files_data, cycles=None, display_plot=False):
         """
         Creates plots for the specified files and cycles with optimized legend placement.
 
@@ -103,16 +103,13 @@ class NewarePlotter:
             files_data (dict): Dictionary mapping file names to processed DataFrames
                               containing voltage and capacity data
             cycles (list, optional): List of cycle numbers to plot, defaults to [1, 2, 3]
-            save_dir (str, optional): Directory to save the generated plot.
-                                     If None, plot is only displayed.
+            display_plot (bool): Whether to display the plot
 
         Returns:
-            list: Paths to the saved plot files, or empty list if no plots were saved
+            fig: The matplotlib figure object created
         """
         if cycles is None:
             cycles = SELECTED_CYCLES
-
-        saved_files = []
 
         # Create a figure with a 2x2 grid - the top row will have 3 plots side by side,
         # and the bottom row will be used for the legend
@@ -169,26 +166,26 @@ class NewarePlotter:
 
         plt.tight_layout()
 
-        # Save figure if a directory is provided. Filename with timestamp.
-        if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
-            timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
-            save_path = os.path.join(save_dir, f'capacity_plot_{timestamp}.png')
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            saved_files.append(save_path)
-            print(f"Plot saved to: {save_path}")
-
         if display_plot:
             plt.show()
-        else:
-            plt.close(fig)
 
-        return fig, saved_files
+        return fig
 
-
-    def plot_ndax_files(self, file_paths, cycles=None, save_dir=None, preprocessed_data=None,
+    def plot_ndax_files(self, file_paths, cycles=None, preprocessed_data=None,
                         display_plot=False, gui_callback=None):
+        """
+        Process multiple NDAX files and create a combined plot.
 
+        Args:
+            file_paths (list): List of paths to NDAX files
+            cycles (list, optional): List of cycle numbers to include
+            preprocessed_data (dict, optional): Pre-processed data to use instead of reading files
+            display_plot (bool): Whether to display the plot
+            gui_callback (callable, optional): Function to call with the figure for GUI display
+
+        Returns:
+            fig: The matplotlib figure object
+        """
         if cycles is None:
             cycles = SELECTED_CYCLES
 
@@ -223,17 +220,16 @@ class NewarePlotter:
 
         if not files_data:
             print("No valid data to plot.")
-            return []
+            return None
 
-        # Create and save plots
-        fig, saved_files = self.create_plot(files_data, cycles, save_dir, display_plot)
+        # Create plot
+        fig = self.create_plot(files_data, cycles, display_plot)
 
         # If a GUI callback was provided, send the figure to it
         if gui_callback and fig is not None:
             gui_callback(fig)
 
-        #return self.create_plot(files_data, cycles, save_dir)
-        return fig, saved_files
+        return fig
 
 
 # Example usage

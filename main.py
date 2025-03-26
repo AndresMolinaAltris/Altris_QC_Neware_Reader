@@ -83,24 +83,20 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
             final_features_df.to_excel(output_file, index=False)
 
         # Generate plots if enabled
+        # In main.py process_files function
         if enable_plotting and ndax_file_list:
             try:
                 print("Generating capacity plots...")
                 plotter = NewarePlotter(db)
-                fig, _ = plotter.plot_ndax_files(
+                fig = plotter.plot_ndax_files(
                     ndax_file_list,
-                    save_dir=save_plots_dir,
-                    display_plot=False  # Don't show in separate window
+                    display_plot=False,  # Don't show in separate window
+                    gui_callback=gui_callback
                 )
-
-                # If we have a GUI callback and a figure was created, update the GUI
-                if gui_callback and fig:
-                    gui_callback(fig)
 
                 print("Plotting complete.")
             except Exception as e:
                 print(f"Error during plotting: {e}")
-
         return final_features_df
     else:
         print("No features extracted.")
