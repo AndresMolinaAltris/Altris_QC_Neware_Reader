@@ -20,6 +20,13 @@ class FileSelector:
         self.fig = None
         self.canvas = None
 
+    def _cleanup(self):
+        """Clean up resources before window destruction."""
+        # Cancel any pending after events
+        if hasattr(self, '_status_update_id') and self._status_update_id:
+            self.root.after_cancel(self._status_update_id)
+            self._status_update_id = None
+
     def show_interface(self, process_callback=None):
         """
         Display the file selector interface and handle file selection/processing.
@@ -30,12 +37,15 @@ class FileSelector:
         self.root.geometry("1000x800")  # Increased height
         self.root.minsize(900, 750)  # Minimum width and height
 
+        # Register cleanup for window close via the X button
+        self.root.protocol("WM_DELETE_WINDOW", lambda: [self._cleanup(), self.root.destroy()])
+
         # Initialize variables
         self.selected_files = []
         self.current_dir = tk.StringVar(value=self.initial_dir)
         self.status_var = tk.StringVar(value="No files selected")
 
-        # Configure grid
+        # Rest of the method remains unchanged
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=0)  # Directory selector row
         self.root.rowconfigure(1, weight=1)  # File lists row
@@ -151,7 +161,6 @@ class FileSelector:
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-
     def _save_current_plot(self):
         """Save the current plot to a file."""
         if not hasattr(self, 'fig') or self.fig is None:
@@ -248,6 +257,10 @@ class FileSelector:
                 "Files Ready for Processing",
                 f"{len(self.selected_files)} files ready to be processed."
             )
+
+            # Cancel any pending after events before destroying the window
+            if hasattr(self, '_status_update_id') and self._status_update_id:
+                self.root.after_cancel(self._status_update_id)
             self.root.destroy()
 
     def _clear_selection(self):
@@ -255,11 +268,6 @@ class FileSelector:
         self.selected_files = []
         self.selected_listbox.delete(0, tk.END)
         messagebox.showinfo("Selection Cleared", "File selection has been cleared.")
-
-    def _exit_application(self):
-        """Exit the application after confirmation."""
-        if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the file selector?"):
-            self.root.destroy()
 
     def _update_status_display(self):
         """Update the status label with the current file selection count."""
@@ -274,14 +282,32 @@ class FileSelector:
     def _start_status_updates(self):
         """Schedule periodic updates of the status display."""
 
+        # Store the after ID so we can cancel it later
+        self._status_update_id = None
+
         def update():
             self._update_status_display()
-            self.root.after(500, update)
+            # Store the ID returned by after so we can cancel it if needed
+            self._status_update_id = self.root.after(500, update)
 
+        # Start the first update
         update()
+
+    def _exit_application(self):
+        """Exit the application after confirmation."""
+        if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the file selector?"):
+            # Cancel any pending after events before destroying the window
+            if hasattr(self, '_status_update_id') and self._status_update_id:
+                self.root.after_cancel(self._status_update_id)
+            self.root.destroy()
 
     def update_plot(self, fig):
         """Update the plot in the GUI with a new figure."""
+        # Check if root window still exists
+        if not hasattr(self, 'root') or not self.root.winfo_exists():
+            print("Warning: Attempted to update plot after window was closed")
+            return
+
         # Find the plot frame if needed
         if not hasattr(self, 'plot_frame'):
             for child in self.root.winfo_children():
@@ -290,38 +316,49 @@ class FileSelector:
                         self.plot_frame = child
                         break
 
-        # Completely clear the plot frame first
-        for widget in self.plot_frame.winfo_children():
-            widget.destroy()
+        # Exit if plot frame doesn't exist
+        if not hasattr(self, 'plot_frame') or not self.plot_frame.winfo_exists():
+            print("Warning: Plot frame no longer exists")
+            return
+
+        # Completely clear the plot frame first - safely
+        for widget in list(self.plot_frame.winfo_children()):
+            try:
+                widget.destroy()
+            except tk.TclError:
+                # Widget might already be destroyed, just continue
+                pass
 
         # Store the new figure with a consistent size
         self.fig = fig
 
-        # Create a fixed-height button container at the bottom
-        button_container = ttk.Frame(self.plot_frame, height=40)
-        button_container.pack(side=tk.BOTTOM, fill=tk.X)
-        button_container.pack_propagate(False)  # Prevent shrinking
+        try:
+            # Create a fixed-height button container at the bottom
+            button_container = ttk.Frame(self.plot_frame, height=40)
+            button_container.pack(side=tk.BOTTOM, fill=tk.X)
+            button_container.pack_propagate(False)  # Prevent shrinking
 
-        # Add Save Plot button
-        save_plot_button = ttk.Button(button_container, text="Save Plot", command=self._save_current_plot)
-        save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
+            # Add Save Plot button
+            save_plot_button = ttk.Button(button_container, text="Save Plot", command=self._save_current_plot)
+            save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
 
-        # Create plot container for the canvas
-        plot_container = ttk.Frame(self.plot_frame)
-        plot_container.pack(fill=tk.BOTH, expand=True)
+            # Create plot container for the canvas
+            plot_container = ttk.Frame(self.plot_frame)
+            plot_container.pack(fill=tk.BOTH, expand=True)
 
-        # Create a new canvas with the figure
-        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
+            # Create a new canvas with the figure
+            self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
 
-        # Make sure the figure fits properly in the available space
-        self.fig.tight_layout()
+            # Make sure the figure fits properly in the available space
+            self.fig.tight_layout()
 
-        # Draw the canvas
-        self.canvas.draw()
+            # Draw the canvas
+            self.canvas.draw()
 
-        # Pack the canvas to fill the available space
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
+            # Pack the canvas to fill the available space
+            self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        except Exception as e:
+            print(f"Error updating plot: {e}")
 
     # Add this to FileSelector class
     def display_matplotlib_figure(self, fig):
