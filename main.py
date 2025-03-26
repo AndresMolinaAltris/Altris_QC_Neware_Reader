@@ -10,6 +10,14 @@ import os
 import pandas as pd
 from file_selector import FileSelector
 from neware_plotter import NewarePlotter
+from logger_configurator import configure_logging
+
+# Define the path where all the python files are located. This is the directory where the logging
+# will be saved
+base_directory = os.getcwd()
+
+# Load logger configuration
+configure_logging(base_directory)
 
 
 def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
