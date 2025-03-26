@@ -19,6 +19,9 @@ base_directory = os.getcwd()
 # Load logger configuration
 configure_logging(base_directory)
 
+# Log the start of the program
+logging.debug("MAIN. QC Neware Reader Started")
+
 
 def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
                   save_plots_dir=None, gui_callback=None):
@@ -42,6 +45,9 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
                          cell ID, sample name, cycle number, and various electrochemical
                          parameters (capacities, internal resistances, etc.)
     """
+
+    logging.debug("MAIN. process_files started")
+
     # Initialize an empty DataFrame to store extracted features
     all_features = []
 
@@ -49,24 +55,24 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
     for file in ndax_file_list:
         filename_stem = Path(file).stem
         cell_ID = extract_cell_id(filename_stem)
-        print(f"Processing cell ID: {cell_ID}")
+        logging.debug(f"MAIN.Processing cell ID: {cell_ID}")
 
         sample_name = extract_sample_name(filename_stem)
-        print(f"Processing sample: {sample_name}")
+        logging.debug(f"Main.Processing sample: {sample_name}")
 
         # Read data from Neware NDA file
         df = NewareNDA.read(file)
 
         # Extract active mass
         mass = db.get_mass(cell_ID)
-        print(f'Mass for cell {cell_ID} is {mass}')
+        logging.debug(f'MAIN.Mass for cell {cell_ID} is {mass}')
 
         # Create a Features object once per file
         features_obj = features.Features(file)
 
         # Process multiple cycles
         for cycle in range(1, 4):  # Cycles 1, 2, 3
-            print(f"Extracting features for CYCLE {cycle}")
+            logging.debug(f"MAIN.Extracting features for CYCLE {cycle}")
 
             # Extract all features in one call
             feature_df = features_obj.extract(df, cycle, mass)
@@ -87,27 +93,30 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
 
         # Save results if output file is specified
         if output_file:
-            print(f"Saving results to {output_file}...")
+            logging.debug(f"MAIN.Saving results to {output_file}...")
             final_features_df.to_excel(output_file, index=False)
 
         # Generate plots if enabled
         # In main.py process_files function
         if enable_plotting and ndax_file_list:
             try:
-                print("Generating capacity plots...")
+                logging.debug("MAIN.Generating capacity plots...")
                 plotter = NewarePlotter(db)
                 fig = plotter.plot_ndax_files(
                     ndax_file_list,
                     display_plot=False,  # Don't show in separate window
                     gui_callback=gui_callback
                 )
+                logging.debug("MAIN.Plotting complete.")
 
-                print("Plotting complete.")
             except Exception as e:
-                print(f"Error during plotting: {e}")
+                logging.debug(f"MAIN.Error during plotting: {e}")
+
+        logging.debug("MAIN.Features extracted, process_files finished")
         return final_features_df
     else:
-        print("No features extracted.")
+        logging.debug("MAIN.No features extracted, process_files func finished.")
+
         return pd.DataFrame()
 
 
@@ -142,12 +151,12 @@ def main():
         os.makedirs(plots_dir, exist_ok=True)
 
     # Load cell database with active mass (only once)
-    print("Loading cell database...")
+    logging.debug("MAIN. Loading cell database...")
     start_time = time.time()
     db = CellDatabase.get_instance()
     db.load_database(cell_database)
     elapsed = time.time() - start_time
-    print(f"Database loaded in {elapsed:.2f} seconds")
+    logging.debug(f"MAIN. Database loaded in {elapsed:.2f} seconds")
 
     # Keep all processed features
     all_processed_features = []
@@ -207,24 +216,24 @@ def main():
                 print(f"All results combined and saved to {output_file}")
 
     # Main processing path based on configuration
-    # Use GUI file selector with callback to process files
-    print("Opening file selector. Please select files and click 'Process Files' button when ready.")
+    logging.debug("MAIN. Opening file selector")
     file_selector_instance.show_interface(process_callback=process_file_callback)
+
     # When the GUI is closed, we're done
-    print("\nFile selection window closed. Processing complete.")
+    logging.debug("MAIN. File selection window closed. Processing complete.")
 
     # Combine all batches if there were multiple
     if len(all_processed_features) > 1:
-        print("\nCombining all processed batches...")
+        logging.debug("MAIN.Combining all processed batches...")
         final_df = pd.concat(all_processed_features, ignore_index=True)
         final_df.to_excel(output_file, index=False)
-        print(f"All results combined and saved to {output_file}")
+        logging.debug(f"MAIN. All results combined and saved to {output_file}")
     elif len(all_processed_features) == 1:
-        print(f"\nProcessing complete. Results saved to batch_{len(all_processed_features)}_{output_file}")
+        logging.debug(f"MAIN.Processing complete. Results saved to batch_{len(all_processed_features)}_{output_file}")
     else:
-        print("\nNo files were processed.")
+        logging.debug("MAIN.No files were processed.")
 
-    print("\nProgram complete.")
+    logging.debug("MAIN.Program complete.")
 
 
 if __name__ == "__main__":

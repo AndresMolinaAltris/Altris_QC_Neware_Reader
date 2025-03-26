@@ -4,6 +4,7 @@ import os
 import NewareNDA
 from cell_database import CellDatabase
 from data_import import extract_cell_id
+import logging
 
 # Constants for plotting
 SELECTED_CYCLES = [1, 2, 3]  # Default cycles to plot, can be changed by user
@@ -213,11 +214,10 @@ class NewarePlotter:
                     files_data[file_name] = processed_data
 
         if not files_data:
-            print("No valid data to plot.")
+            logging.debug("NEWARE_PLOTTER.No valid data to plot.")
             return None
 
         # Create plot
-        #fig = self.create_plot(files_data, display_plot)
         fig = self.create_plot(files_data, display_plot)
 
         # If a GUI callback was provided, send the figure to it
@@ -227,7 +227,6 @@ class NewarePlotter:
         return fig
 
 
-# Example usage
 if __name__ == "__main__":
     plotter = NewarePlotter()
 

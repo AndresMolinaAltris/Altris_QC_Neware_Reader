@@ -71,6 +71,7 @@ def extract_cell_id(filename):
             str or None: The extracted cell ID as a string if found, otherwise None.
 
         """
+    logging.debug("DATA_IMPORT.extracting_cell_id func started")
     try:
         # First attempt: Extract digits before '_'
         match = re.match(r"^(\d+)[_]", filename)
@@ -80,6 +81,8 @@ def extract_cell_id(filename):
         return match.group(1) if match else None
     except Exception as e:
         print(f"Error processing filename '{filename}': {e}")
+
+        logging.debug("DATA_IMPORT.extracting_cell_id func finished")
         return None
 
 def extract_sample_name(filename):

@@ -3,6 +3,7 @@ from tkinter import filedialog, ttk, messagebox
 import os
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+import logging
 
 
 class FileSelector:
@@ -84,8 +85,11 @@ class FileSelector:
                    command=self._exit_application).pack(side=tk.RIGHT, padx=5)
         ttk.Button(button_frame, text="Clear Selection",
                    command=self._clear_selection).pack(side=tk.RIGHT, padx=5)
+
+        logging.debug("FILE_SELECTOR. Calling process_files func in main")
         ttk.Button(button_frame, text="Process Files",
                    command=lambda: self._process_files(process_callback)).pack(side=tk.RIGHT, padx=5)
+
         ttk.Button(button_frame, text="Confirm Selection",
                    command=self._confirm_selection).pack(side=tk.RIGHT, padx=5)
 
@@ -230,6 +234,7 @@ class FileSelector:
 
     def _process_files(self, callback):
         """Process the selected files using the provided callback function."""
+        logging.debug("FILE_SELECTOR._process_files func started")
         if not self.selected_files:
             messagebox.showwarning(
                 "No Selection",
@@ -239,6 +244,7 @@ class FileSelector:
 
         # If we have a callback function, call it with the selected files
         if callback:
+            logging.debug("FILE_SELECTOR._process_files callback")
             # Create a copy of the selected files
             files_to_process = self.selected_files.copy()
 
@@ -251,7 +257,10 @@ class FileSelector:
 
             # Update status to show completion
             self.status_var.set(f"Processed {len(files_to_process)} files. Ready for next batch.")
+            logging.debug("FILE_SELECTOR._process_files callback finished")
+
         else:
+            logging.debug("FILE_SELECTOR._process_files func no callback")
             # If no callback, just confirm and return
             messagebox.showinfo(
                 "Files Ready for Processing",
@@ -262,6 +271,7 @@ class FileSelector:
             if hasattr(self, '_status_update_id') and self._status_update_id:
                 self.root.after_cancel(self._status_update_id)
             self.root.destroy()
+            logging.debug("FILE_SELECTOR._process_files func no callback finished")
 
     def _clear_selection(self):
         """Clear the current file selection."""
