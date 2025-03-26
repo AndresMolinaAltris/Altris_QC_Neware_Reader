@@ -1,7 +1,4 @@
-import re
-import NewareNDA
-import logging
-from io import StringIO
+from common.imports import re, logging, StringIO, NewareNDA
 
 
 def extract_active_mass(file_path):

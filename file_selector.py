@@ -1,10 +1,8 @@
-import tkinter as tk
-from tkinter import filedialog, ttk, messagebox
-import os
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-import logging
-import matplotlib.pyplot as plt
+# file_selector.py
+from common.imports import (
+    tk, filedialog, ttk, messagebox, os,
+    logging, FigureCanvasTkAgg, Figure, plt
+)
 
 
 class FileSelector:

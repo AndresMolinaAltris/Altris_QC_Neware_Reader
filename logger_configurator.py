@@ -1,7 +1,5 @@
-import logging.config
-import os
-import datetime
-import yaml
+# logger_configurator.py
+from common.imports import logging, os, datetime, yaml
 
 
 def configure_logging(base_directory):

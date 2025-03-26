@@ -1,10 +1,5 @@
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import os
-import NewareNDA
-from cell_database import CellDatabase
-from data_import import extract_cell_id
-import logging
+from common.imports import plt, gridspec, os, logging, NewareNDA
+from common.project_imports import CellDatabase, extract_cell_id
 
 # Constants for plotting
 SELECTED_CYCLES = [1, 2, 3]  # Default cycles to plot, can be changed by user

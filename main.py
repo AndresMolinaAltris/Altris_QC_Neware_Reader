@@ -1,17 +1,13 @@
-from data_import import *
-import features
-import NewareNDA
+import sys
 from pathlib import Path
-from cell_database import CellDatabase
-import yaml
-import time
-import os
-import pandas as pd
-from file_selector import FileSelector
-from neware_plotter import NewarePlotter
-import logging
-from logger_configurator import configure_logging
-import matplotlib.pyplot as plt
+from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA
+from common.project_imports import (
+    extract_cell_id, extract_sample_name, Features,
+    CellDatabase, NewarePlotter, FileSelector,
+    configure_logging
+)
+
+sys.path.append(str(Path(__file__).parent))
 
 
 # Define the path where all the python files are located. This is the directory where the logging
@@ -70,7 +66,7 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
         logging.debug(f'MAIN.Mass for cell {cell_ID} is {mass}')
 
         # Create a Features object once per file
-        features_obj = features.Features(file)
+        features_obj = Features(file)
 
         # Process multiple cycles
         for cycle in range(1, 4):  # Cycles 1, 2, 3

@@ -1,8 +1,4 @@
-import pandas as pd
-import os
-import pickle
-import time
-import hashlib
+from common.imports import pd, os, pickle, time, hashlib
 
 
 class CellDatabase:
