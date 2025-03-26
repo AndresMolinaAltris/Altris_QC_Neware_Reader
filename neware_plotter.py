@@ -1,5 +1,5 @@
-import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import os
 import NewareNDA
 from cell_database import CellDatabase
@@ -46,15 +46,13 @@ class NewarePlotter:
 
         return sample_name
 
-    def preprocess_ndax_file(self, file_path, cycles=None):
+    def preprocess_ndax_file(self, file_path):
         """
         Reads an NDAX file and prepares it for plotting, reusing the existing
         data processing code from the Features class.
 
         Args:
             file_path (str): Path to the NDAX file
-            cycles (list, optional): List of cycle numbers to include
-
         Returns:
             tuple: (file_name, DataFrame) containing the processed data
         """
@@ -91,7 +89,7 @@ class NewarePlotter:
             print(f"Error processing file for plotting {file_path}: {e}")
             return None, None
 
-    def create_plot(self, files_data, cycles=None, display_plot=False):
+    def create_plot(self, files_data, display_plot=False):
         """
         Creates plots for the specified files and cycles with optimized legend placement.
 
@@ -102,21 +100,19 @@ class NewarePlotter:
         Args:
             files_data (dict): Dictionary mapping file names to processed DataFrames
                               containing voltage and capacity data
-            cycles (list, optional): List of cycle numbers to plot, defaults to [1, 2, 3]
             display_plot (bool): Whether to display the plot
 
         Returns:
             fig: The matplotlib figure object created
         """
-        if cycles is None:
-            cycles = SELECTED_CYCLES
+        #if cycles is None:
+        cycles = SELECTED_CYCLES
 
         # Create a figure with a 2x2 grid - the top row will have 3 plots side by side,
         # and the bottom row will be used for the legend
         fig = plt.figure(figsize=(15, 5))  # Increased height slightly
 
         # Create a grid layout with more control
-        import matplotlib.gridspec as gridspec
         gs = gridspec.GridSpec(2, 3, height_ratios=[4, 0.2])  # 2 rows, 3 columns, with top row 4x taller
 
         # Dictionary to store handles for the legend
@@ -171,14 +167,12 @@ class NewarePlotter:
 
         return fig
 
-    def plot_ndax_files(self, file_paths, cycles=None, preprocessed_data=None,
-                        display_plot=False, gui_callback=None):
+    def plot_ndax_files(self, file_paths, preprocessed_data=None, display_plot=False, gui_callback=None):
         """
         Process multiple NDAX files and create a combined plot.
 
         Args:
             file_paths (list): List of paths to NDAX files
-            cycles (list, optional): List of cycle numbers to include
             preprocessed_data (dict, optional): Pre-processed data to use instead of reading files
             display_plot (bool): Whether to display the plot
             gui_callback (callable, optional): Function to call with the figure for GUI display
@@ -186,8 +180,8 @@ class NewarePlotter:
         Returns:
             fig: The matplotlib figure object
         """
-        if cycles is None:
-            cycles = SELECTED_CYCLES
+        #if cycles is None:
+        cycles = SELECTED_CYCLES
 
         # Process all files
         files_data = {}
@@ -214,7 +208,7 @@ class NewarePlotter:
         else:
             # Process files normally if no preprocessed data
             for file_path in file_paths:
-                file_name, processed_data = self.preprocess_ndax_file(file_path, cycles)
+                file_name, processed_data = self.preprocess_ndax_file(file_path)
                 if processed_data is not None:
                     files_data[file_name] = processed_data
 
@@ -223,7 +217,8 @@ class NewarePlotter:
             return None
 
         # Create plot
-        fig = self.create_plot(files_data, cycles, display_plot)
+        #fig = self.create_plot(files_data, display_plot)
+        fig = self.create_plot(files_data, display_plot)
 
         # If a GUI callback was provided, send the figure to it
         if gui_callback and fig is not None:
