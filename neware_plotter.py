@@ -30,6 +30,15 @@ class NewarePlotter:
         self.colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'cyan', 'magenta']
         self.line_styles = ['-', '--', '-.']
 
+    def cleanup_plot_resources(self):
+        """Clean up matplotlib resources to prevent memory leaks."""
+        logging.debug("NEWARE_PLOTTER. Cleaning up matplotlib resources.")
+        try:
+            plt.close('all')
+            logging.debug("NEWARE_PLOTTER. All matplotlib figures closed.")
+        except Exception as e:
+            logging.debug(f"NEWARE_PLOTTER. Error cleaning up matplotlib: {e}")
+
     def extract_legend_name(self, file_name):
         """
         Extracts a legend name from the file name.

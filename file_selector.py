@@ -4,6 +4,7 @@ import os
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import logging
+import matplotlib.pyplot as plt
 
 
 class FileSelector:
@@ -21,12 +22,42 @@ class FileSelector:
         self.fig = None
         self.canvas = None
 
-    def _cleanup(self):
-        """Clean up resources before window destruction."""
+    def _comprehensive_cleanup(self):
+        """Comprehensive cleanup of all resources before window destruction."""
+        logging.debug("FILE_SELECTOR. Comprehensive cleanup started.")
+
         # Cancel any pending after events
         if hasattr(self, '_status_update_id') and self._status_update_id:
+            logging.debug("FILE_SELECTOR. Canceling pending after events.")
             self.root.after_cancel(self._status_update_id)
             self._status_update_id = None
+
+        # Clean up matplotlib resources
+        logging.debug("FILE_SELECTOR. Closing all matplotlib figures.")
+        plt.close('all')
+
+        # Set matplotlib to non-interactive mode
+        logging.debug("FILE_SELECTOR. Setting matplotlib to non-interactive mode.")
+        plt.ioff()
+
+        logging.debug("FILE_SELECTOR. Comprehensive cleanup completed.")
+
+    def _cleanup(self):
+        """Basic cleanup resources before window destruction - kept for backward compatibility."""
+        logging.debug("FILE_SELECTOR. Cleanup method called.")
+        # Call the comprehensive cleanup instead
+        self._comprehensive_cleanup()
+        logging.debug("FILE_SELECTOR. Cleanup completed.")
+
+    def _on_window_close(self):
+        """Handle window close event when the X button is clicked."""
+        logging.debug("FILE_SELECTOR. Window close (X button) detected.")
+        # Use the comprehensive cleanup
+        self._comprehensive_cleanup()
+
+        logging.debug("FILE_SELECTOR. Destroying window from X button.")
+        self.root.destroy()
+        logging.debug("FILE_SELECTOR. Window destroyed from X button close.")
 
     def show_interface(self, process_callback=None):
         """
@@ -39,7 +70,7 @@ class FileSelector:
         self.root.minsize(900, 750)  # Minimum width and height
 
         # Register cleanup for window close via the X button
-        self.root.protocol("WM_DELETE_WINDOW", lambda: [self._cleanup(), self.root.destroy()])
+        self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
 
         # Initialize variables
         self.selected_files = []
@@ -97,8 +128,10 @@ class FileSelector:
         self._update_file_list()
         self._start_status_updates()
 
-        # Start the GUI event loop
+        logging.debug("FILE_SELECTOR. Starting Tkinter mainloop.")
+        # Starting the main loop
         self.root.mainloop()
+        logging.debug("FILE_SELECTOR. Tkinter mainloop exited.")
 
         # Return selected files if not using callback
         if not process_callback:
@@ -306,10 +339,13 @@ class FileSelector:
     def _exit_application(self):
         """Exit the application after confirmation."""
         if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the file selector?"):
-            # Cancel any pending after events before destroying the window
-            if hasattr(self, '_status_update_id') and self._status_update_id:
-                self.root.after_cancel(self._status_update_id)
+            logging.debug("FILE_SELECTOR. User confirmed exit. Performing cleanup...")
+            # Use the comprehensive cleanup
+            self._comprehensive_cleanup()
+
+            logging.debug("FILE_SELECTOR. Destroying root window.")
             self.root.destroy()
+            logging.debug("FILE_SELECTOR. Root window destroyed.")
 
     def update_plot(self, fig):
         """Update the plot in the GUI with a new figure."""

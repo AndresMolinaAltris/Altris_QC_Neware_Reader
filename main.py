@@ -11,6 +11,8 @@ from file_selector import FileSelector
 from neware_plotter import NewarePlotter
 import logging
 from logger_configurator import configure_logging
+import matplotlib.pyplot as plt
+
 
 # Define the path where all the python files are located. This is the directory where the logging
 # will be saved
@@ -235,7 +237,12 @@ def main():
     else:
         logging.debug("MAIN.No files were processed.")
 
+    logging.debug("MAIN. Program ending. Attempting to close matplotlib resources.")
+    plt.close('all')  # Close all matplotlib figures
+    logging.debug("MAIN. Matplotlib figures closed. Program should terminate now.")
+
     logging.debug("MAIN.Program complete.")
+
 
 if __name__ == "__main__":
     main()
