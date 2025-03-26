@@ -11,7 +11,7 @@ def configure_logging(base_directory):
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = f'{log_dir}/Biologic_CAM_creator_logging_{timestamp}.log'
+        log_filename = f'{log_dir}/Altris_QC_Neware_Reader_logging_{timestamp}.log'
 
         log_config_path = os.path.join(os.path.dirname(__file__), 'log_config.yaml')
         with open(log_config_path, 'rt') as f:
