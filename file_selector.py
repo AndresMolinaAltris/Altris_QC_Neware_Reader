@@ -370,7 +370,6 @@ class FileSelector:
         except Exception as e:
             print(f"Error updating plot: {e}")
 
-    # Add this to FileSelector class
     def display_matplotlib_figure(self, fig):
         """Display a matplotlib figure in the plot preview area."""
         # Clear any existing plot
@@ -389,18 +388,3 @@ class FileSelector:
         # Add Save Plot button
         save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
         save_plot_button.pack(side=tk.RIGHT, padx=5)
-
-# Convenience function for easier access
-def select_ndax_files(initial_dir=None, callback=None):
-    """
-    Display a file selection dialog for .ndax files.
-
-    Args:
-        initial_dir (str, optional): Initial directory to open.
-        callback (callable, optional): Function to call with selected files.
-
-    Returns:
-        list: List of selected file paths if no callback provided.
-    """
-    selector = FileSelector(initial_dir)
-    return selector.show_interface(callback)
