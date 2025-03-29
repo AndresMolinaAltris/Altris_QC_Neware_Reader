@@ -236,36 +236,46 @@ class FileSelector:
             messagebox.showinfo("Success", f"Plot saved to {file_path}")
 
     def _create_analysis_table(self):
-        """Create a simple 3x3 table in the analysis tab."""
+        """Create a table in the analysis tab to display specific capacity results."""
         # Create a frame to hold the table
         table_frame = ttk.Frame(self.analysis_tab)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Create a Treeview widget with 3 columns
-        columns = ("Column 1", "Column 2", "Column 3")
-        self.analysis_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=3)
+        # Create a Treeview widget with our desired columns
+        columns = ("Cell ID", "Specific Charge Capacity (mAh/g)",
+                   "Specific Discharge Capacity (mAh/g)", "Coulombic Efficiency (%)")
+        self.analysis_table = ttk.Treeview(table_frame, columns=columns, show="headings")
 
-        # Define column headings
+        # Define column headings and widths
+        column_widths = {
+            "Cell ID": 100,
+            "Specific Charge Capacity (mAh/g)": 200,
+            "Specific Discharge Capacity (mAh/g)": 200,
+            "Coulombic Efficiency (%)": 150
+        }
+
         for col in columns:
             self.analysis_table.heading(col, text=col)
-            self.analysis_table.column(col, width=150, anchor="center")
+            self.analysis_table.column(col, width=column_widths[col], anchor="center")
 
-        # Insert 3 empty rows
-        for i in range(3):
-            self.analysis_table.insert("", "end", values=("", "", ""))
+        # Add scrollbars
+        y_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.analysis_table.yview)
+        x_scrollbar = ttk.Scrollbar(table_frame, orient="horizontal", command=self.analysis_table.xview)
+        self.analysis_table.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
 
-        # Add a scrollbar
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.analysis_table.yview)
-        self.analysis_table.configure(yscrollcommand=scrollbar.set)
+        # Place the table and scrollbars in the frame
+        self.analysis_table.grid(row=0, column=0, sticky="nsew")
+        y_scrollbar.grid(row=0, column=1, sticky="ns")
+        x_scrollbar.grid(row=1, column=0, sticky="ew")
 
-        # Place the table and scrollbar in the frame
-        self.analysis_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Configure the table frame grid
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
 
         # Add a label explaining the purpose of this tab
         explanation = ttk.Label(
             self.analysis_tab,
-            text="This tab will display numerical analysis of the processed data.\nProcess files in the 'Charge vs Voltage Plot' tab to see results.",
+            text="This tab displays first cycle data from processed files.\nProcess files in the 'Charge vs Voltage Plot' tab to see results.",
             justify=tk.CENTER
         )
         explanation.pack(pady=10)
@@ -478,8 +488,37 @@ class FileSelector:
         save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
         save_plot_button.pack(side=tk.RIGHT, padx=5)
 
-    def _update_analysis_table(self):
-        """Update the analysis table with data from the processed files."""
-        # This is a placeholder method that will be expanded in future steps
-        # For now, it does nothing
-        pass
+    def _update_analysis_table(self, features_df=None):
+        """
+        Update the analysis table with data from the processed files.
+
+        :param features_df: DataFrame containing the extracted features.
+                            If None, attempt to clear the table.
+        """
+        # Clear existing items in the table
+        for item in self.analysis_table.get_children():
+            self.analysis_table.delete(item)
+
+        # If no data provided, exit early
+        if features_df is None or features_df.empty:
+            return
+
+        # Filter data to only include first cycle
+        cycle1_data = features_df[features_df['Cycle'] == 1]
+
+        # If no cycle 1 data, exit early
+        if cycle1_data.empty:
+            return
+
+        # Insert data for each cell
+        for _, row in cycle1_data.iterrows():
+            # Prepare the values to display
+            values = (
+                row.get('cell ID', 'Unknown'),
+                f"{row.get('Specific Charge Capacity (mAh/g)', 0):.1f}",
+                f"{row.get('Specific Discharge Capacity (mAh/g)', 0):.1f}",
+                f"{row.get('Coulombic Efficiency (%)', 0):.1f}"
+            )
+
+            # Insert the row into the table
+            self.analysis_table.insert('', 'end', values=values)
