@@ -370,7 +370,7 @@ class FileSelector:
             if features_df is not None and not features_df.empty:
                 self._update_analysis_table(features_df)
                 # Switch to the analysis tab to show the results
-                self.notebook.select(self.analysis_tab)
+                #self.notebook.select(self.analysis_tab)
 
             # Update status to show completion
             self.status_var.set(f"Processed {len(files_to_process)} files. Ready for next batch.")
