@@ -30,7 +30,8 @@ class Features:
             (self.extract_charge_capacity, (df, features, cycle, mass)),
             (self.extract_discharge_capacity, (df, features, cycle, mass)),
             (self.extract_internal_resistance_soc_100, (df, features, cycle)),
-            (self.extract_internal_resistance_soc_0, (df, features, cycle))
+            (self.extract_internal_resistance_soc_0, (df, features, cycle)),
+            (self.extract_coulombic_efficiency, (df, features, cycle))  # Add the new function
         ]
 
         # Attempt to extract features, handling errors
