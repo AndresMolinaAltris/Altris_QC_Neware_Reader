@@ -24,20 +24,15 @@ The Altris QC Neware Reader is designed to extract, analyze, and visualize elect
 
 ### Prerequisites
 
-- Python 3.6+
-- Neware NDA library (`NewareNDA`)
+- Python 3.9
 - Required Python packages (install via pip):
   ```
-  pip install pandas numpy matplotlib pyyaml tk
+  pip install -r requirements.txt
   ```
 
 ### Setup
 
-1. Clone this repository:
-   ```
-   git clone https://github.com/yourusername/altris-qc-neware-reader.git
-   cd altris-qc-neware-reader
-   ```
+1. Clone this repository.
 
 2. Create a `config.yaml` file in the root directory with the following structure:
    ```yaml
@@ -49,7 +44,10 @@ The Altris QC Neware Reader is designed to extract, analyze, and visualize elect
    use_gui: true
    ```
 
-3. Ensure you have a cell database Excel file that contains the cell ID as`Name/ID` and the active material mass as`Active mass (mg)` columns. If the cell database is not loaded correctly or does not contain the active mass for the Cell ID, the program will take the mass as 1 for calculating specific charge and sicharge capacity.
+3. Ensure you have a cell database Excel file that contains the cell ID as`Name/ID` 
+and the active material mass as`Active mass (mg)` columns. If the cell database is 
+not loaded correctly or does not contain the active mass for the Cell ID, the 
+program will take the mass as 1 for calculating specific charge and discharge capacity.
 
 ## Usage
 
