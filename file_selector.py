@@ -140,9 +140,6 @@ class FileSelector:
         ttk.Button(button_frame, text="Process Files",
                    command=lambda: self._process_files(process_callback)).pack(side=tk.RIGHT, padx=5)
 
-        ttk.Button(button_frame, text="Confirm Selection",
-                   command=self._confirm_selection).pack(side=tk.RIGHT, padx=5)
-
         # Initialize file list and start status updates
         self._update_file_list()
         self._start_status_updates()
@@ -330,19 +327,6 @@ class FileSelector:
                 self.selected_files.remove(full_path)
             self.selected_listbox.delete(i)
 
-    def _confirm_selection(self):
-        """Show a confirmation message about the current selection."""
-        if self.selected_files:
-            messagebox.showinfo(
-                "Selection Confirmed",
-                f"{len(self.selected_files)} files selected. You can continue selecting more files."
-            )
-        else:
-            messagebox.showwarning(
-                "No Selection",
-                "No files are currently selected. Please select files before confirming."
-            )
-
     def _process_files(self, callback):
         """Process the selected files using the provided callback function."""
         logging.debug("FILE_SELECTOR._process_files func started")
@@ -369,8 +353,6 @@ class FileSelector:
             # Update the analysis table with the new data
             if features_df is not None and not features_df.empty:
                 self._update_analysis_table(features_df)
-                # Switch to the analysis tab to show the results
-                #self.notebook.select(self.analysis_tab)
 
             # Update status to show completion
             self.status_var.set(f"Processed {len(files_to_process)} files. Ready for next batch.")
