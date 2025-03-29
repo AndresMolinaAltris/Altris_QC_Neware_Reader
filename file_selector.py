@@ -1,5 +1,5 @@
 from common.imports import (
-    tk, filedialog, ttk, messagebox, os,
+    tk, filedialog, ttk, messagebox, os, pd,
     logging, FigureCanvasTkAgg, Figure, plt
 )
 from performance_stats import calculate_statistics
@@ -7,9 +7,10 @@ from performance_stats import calculate_statistics
 class FileSelector:
     """A GUI for selecting and processing .ndax files with preview functionality."""
 
-    def __init__(self, initial_dir=None):
+    def __init__(self, initial_dir=None, default_output_file=None):
         """Initialize the file selector with an optional starting directory."""
         self.initial_dir = initial_dir or os.getcwd()
+        self.default_output_file = default_output_file or "specific_capacity_results.xlsx"
         self.selected_files = []
         self.root = None
         self.listbox = None
@@ -549,8 +550,40 @@ class FileSelector:
 
     def _export_analysis_table(self):
         """Export the analysis table to an Excel file."""
-        # This is a placeholder for future export functionality
-        messagebox.showinfo(
-            "Export Table",
-            "This feature will be implemented in a future update."
+        if not self.analysis_table.get_children():
+            messagebox.showinfo("Export Table", "No data to export.")
+            return
+
+        # Use the default output file path, but allow user to change it
+        default_dir = os.path.dirname(os.path.abspath(self.default_output_file))
+        default_file = os.path.basename(self.default_output_file)
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            initialdir=default_dir,
+            initialfile=default_file
         )
+
+        if not file_path:
+            return  # User cancelled
+
+        try:
+            # Create a DataFrame from the table data
+            data = []
+            columns = self.analysis_table["columns"]
+
+            for item_id in self.analysis_table.get_children():
+                item_values = self.analysis_table.item(item_id)["values"]
+                data.append(dict(zip(columns, item_values)))
+
+            # Convert to DataFrame and export
+            df = pd.DataFrame(data)
+            df.to_excel(file_path, index=False)
+
+            messagebox.showinfo("Export Successful", f"Table data exported to {file_path}")
+            logging.debug(f"FILE_SELECTOR. Table data exported to {file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"An error occurred: {str(e)}")
+            logging.debug(f"FILE_SELECTOR. Error exporting table data: {e}")

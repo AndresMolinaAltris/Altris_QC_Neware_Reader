@@ -19,9 +19,8 @@ configure_logging(base_directory)
 # Log the start of the program
 logging.debug("MAIN. QC Neware Reader Started")
 
-
 def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
-                  save_plots_dir=None, gui_callback=None):
+                  gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
     """
@@ -148,7 +147,7 @@ def main():
     all_processed_features = []
 
     # Create the file selector instance
-    file_selector_instance = FileSelector(initial_dir=data_path)
+    file_selector_instance = FileSelector(initial_dir=data_path, default_output_file=output_file)
 
     # Define a callback function to process files
     def process_file_callback(ndax_file_list):
@@ -182,7 +181,9 @@ def main():
 
         # Process current batch of files
         batch_number = len(all_processed_features) + 1
-        batch_output = f"batch_{batch_number}_{output_file}"
+        #batch_output = f"batch_{batch_number}_{output_file}"
+        batch_output = None
+
 
         # Process files with plotting enabled
         features_df = process_files(
@@ -196,13 +197,13 @@ def main():
 
         if not features_df.empty:
             all_processed_features.append(features_df)
-            logging.debug(f"MAIN.Batch {batch_number} processed successfully. Results saved to {batch_output}")
+            logging.debug(f"MAIN.Features processed successfully")
 
             # Combine all batches processed so far
-            if len(all_processed_features) > 1:
-                combined_df = pd.concat(all_processed_features, ignore_index=True)
-                combined_df.to_excel(output_file, index=False)
-                logging.debug(f"MAIN.All results combined and saved to {output_file}")
+            #if len(all_processed_features) > 1:
+            #    combined_df = pd.concat(all_processed_features, ignore_index=True)
+            #    combined_df.to_excel(output_file, index=False)
+            #    logging.debug(f"MAIN.All results combined and saved to {output_file}")
 
             # Return the current batch features DataFrame
             return features_df
@@ -217,15 +218,15 @@ def main():
     logging.debug("MAIN. File selection window closed. Processing complete.")
 
     # Combine all batches if there were multiple
-    if len(all_processed_features) > 1:
-        logging.debug("MAIN.Combining all processed batches...")
-        final_df = pd.concat(all_processed_features, ignore_index=True)
-        final_df.to_excel(output_file, index=False)
-        logging.debug(f"MAIN. All results combined and saved to {output_file}")
-    elif len(all_processed_features) == 1:
-        logging.debug(f"MAIN.Processing complete. Results saved to batch_{len(all_processed_features)}_{output_file}")
-    else:
-        logging.debug("MAIN.No files were processed.")
+    #if len(all_processed_features) > 1:
+    #    logging.debug("MAIN.Combining all processed batches...")
+    #    final_df = pd.concat(all_processed_features, ignore_index=True)
+    #    final_df.to_excel(output_file, index=False)
+    #    logging.debug(f"MAIN. All results combined and saved to {output_file}")
+    #elif len(all_processed_features) == 1:
+    #    logging.debug(f"MAIN.Processing complete. Results saved to batch_{len(all_processed_features)}_{output_file}")
+    #else:
+    #    logging.debug("MAIN.No files were processed.")
 
     logging.debug("MAIN. Program ending. Attempting to close matplotlib resources.")
     plt.close('all')  # Close all matplotlib figures
