@@ -4,7 +4,7 @@ A Python-based tool for analyzing electrochemical data from Neware battery testi
 
 ## Overview
 
-The Altris QC Neware Reader is designed to extract, analyze, and visualize electrochemical test data from Neware battery testing equipment. It processes NDAX files to calculate key metrics such as charge/discharge capacities and internal resistance at different state-of-charge (SOC) levels.
+The Altris QC Neware Reader is designed to extract, analyze, and visualize electrochemical test data from Neware battery testing equipment. It processes NDAX files to calculate key metrics such as specific charge/discharge capacities and internal resistance at different state-of-charge (SOC) levels. The calculation and visualizations are designed by default for the first three cycles.
 
 ### Key Features
 
