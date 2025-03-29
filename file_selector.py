@@ -353,7 +353,13 @@ class FileSelector:
             self.root.update()
 
             # Call the callback function with the list of files
-            callback(files_to_process)
+            features_df = callback(files_to_process)
+
+            # Update the analysis table with the new data
+            if features_df is not None and not features_df.empty:
+                self._update_analysis_table(features_df)
+                # Switch to the analysis tab to show the results
+                self.notebook.select(self.analysis_tab)
 
             # Update status to show completion
             self.status_var.set(f"Processed {len(files_to_process)} files. Ready for next batch.")

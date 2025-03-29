@@ -161,6 +161,9 @@ def main():
 
         Args:
             ndax_file_list (list): List of paths to NDAX files to process
+
+        Returns:
+            pd.DataFrame: The extracted features for the current batch
         """
 
         logging.debug("MAIN.process_file_callback func started")
@@ -168,7 +171,7 @@ def main():
 
         if not ndax_file_list:
             print("No files to process.")
-            return
+            return None
 
         # Display summary of selected files
         logging.debug(f"MAIN.Processing {len(ndax_file_list)} files:")
@@ -181,16 +184,14 @@ def main():
         batch_number = len(all_processed_features) + 1
         batch_output = f"batch_{batch_number}_{output_file}"
 
-        # Process files with plotting enabled. This is the part that send the plot
-        # to the GUI though the callback (gui_callback)
-        logging.debug("MAIN.Sending plot to GUI.")
+        # Process files with plotting enabled
         features_df = process_files(
             ndax_file_list,
             db,
             batch_output,
             enable_plotting=enable_plotting,
             save_plots_dir=plots_dir,
-            gui_callback = file_selector_instance.update_plot
+            gui_callback=file_selector_instance.update_plot
         )
 
         if not features_df.empty:
@@ -202,6 +203,11 @@ def main():
                 combined_df = pd.concat(all_processed_features, ignore_index=True)
                 combined_df.to_excel(output_file, index=False)
                 logging.debug(f"MAIN.All results combined and saved to {output_file}")
+
+            # Return the current batch features DataFrame
+            return features_df
+
+        return None
 
     # Main processing path based on configuration
     logging.debug("MAIN. Opening file selector")
