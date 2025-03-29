@@ -122,3 +122,25 @@ class Features:
         except Exception:
             features["Discharge Capacity (mAh)"] = np.nan
             features["Specific Discharge Capacity (mAh/g)"] = np.nan
+
+    def extract_coulombic_efficiency(self, df, features, cycle):
+        """
+        Calculates coulombic efficiency (discharge capacity / charge capacity * 100).
+
+        :param df: pandas DataFrame containing experimental data.
+        :param features: Dictionary to store extracted features.
+        :param cycle: Integer representing the cycle number.
+        """
+        try:
+            # Get the charge and discharge capacities
+            charge_capacity = features.get("Charge Capacity (mAh)", 0)
+            discharge_capacity = features.get("Discharge Capacity (mAh)", 0)
+
+            # Calculate coulombic efficiency (avoid division by zero)
+            if charge_capacity > 0:
+                coulombic_efficiency = (discharge_capacity / charge_capacity) * 100
+                features["Coulombic Efficiency (%)"] = round(coulombic_efficiency, 1)
+            else:
+                features["Coulombic Efficiency (%)"] = np.nan
+        except Exception:
+            features["Coulombic Efficiency (%)"] = np.nan
