@@ -4,7 +4,7 @@ A Python-based tool for analyzing electrochemical data from Neware battery testi
 
 ## Overview
 
-The Altris QC Neware Reader is designed to extract, analyze, and visualize electrochemical test data from Neware battery testing equipment. It processes NDAX files to calculate key metrics such as charge/discharge capacities and internal resistance at different state-of-charge (SOC) levels.
+The Altris QC Neware Reader is designed to extract, analyze, and visualize electrochemical test data from Neware battery testing equipment. It processes NDAX files to calculate key metrics such as specific charge/discharge capacities and internal resistance at different state-of-charge (SOC) levels. The calculation and visualizations are designed by default for the first three cycles.
 
 ### Key Features
 
@@ -16,10 +16,9 @@ The Altris QC Neware Reader is designed to extract, analyze, and visualize elect
   - Specific discharge capacity (mAh/g)
   - Internal resistance at SOC 100% (Ohms)
   - Internal resistance at SOC 0% (Ohms)
-- Cell mass data management with caching for performance
 - Interactive graphical user interface for file selection
 - Capacity curve visualization
-- Automated data export to Excel
+- Automated performance data export to Excel
 
 ## Installation
 
@@ -50,7 +49,7 @@ The Altris QC Neware Reader is designed to extract, analyze, and visualize elect
    use_gui: true
    ```
 
-3. Ensure your cell database Excel file has sheets containing `Name/ID` and `Active mass (mg)` columns.
+3. Ensure you have a cell database Excel file that contains the cell ID as`Name/ID` and the active material mass as`Active mass (mg)` columns. If the cell database is not loaded correctly or does not contain the active mass for the Cell ID, the program will take the mass as 1 for calculating specific charge and sicharge capacity.
 
 ## Usage
 
