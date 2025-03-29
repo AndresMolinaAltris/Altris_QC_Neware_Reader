@@ -1,4 +1,3 @@
-# file_selector.py
 from common.imports import (
     tk, filedialog, ttk, messagebox, os,
     logging, FigureCanvasTkAgg, Figure, plt
@@ -75,12 +74,11 @@ class FileSelector:
         self.current_dir = tk.StringVar(value=self.initial_dir)
         self.status_var = tk.StringVar(value="No files selected")
 
-        # Rest of the method remains unchanged
+        # Configure grid layout
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=0)  # Directory selector row
-        self.root.rowconfigure(1, weight=1)  # File lists row
-        self.root.rowconfigure(2, weight=2)  # Plot area row
-        self.root.rowconfigure(3, weight=0)  # Buttons row
+        self.root.rowconfigure(1, weight=0)  # Tabs row (new)
+        self.root.rowconfigure(2, weight=1)  # Content area (contains the notebook)
 
         # Create the directory selector in row 0
         dir_frame = ttk.Frame(self.root)
@@ -90,23 +88,46 @@ class FileSelector:
         ttk.Entry(dir_frame, textvariable=self.current_dir, width=60).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(dir_frame, text="Browse...", command=self._browse_directory).pack(side=tk.LEFT)
 
-        # Create file lists frame in row 1
-        file_frame = ttk.Frame(self.root)
-        file_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        # Create notebook (tabbed interface) in row 1
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.grid(row=1, column=0, rowspan=2, sticky="nsew", padx=10, pady=5)
+
+        # Create first tab - "Charge vs Voltage Plot"
+        self.plot_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.plot_tab, text="Charge vs Voltage Plot")
+
+        # Configure the plot tab grid
+        self.plot_tab.columnconfigure(0, weight=1)
+        self.plot_tab.rowconfigure(0, weight=1)  # File lists row
+        self.plot_tab.rowconfigure(1, weight=2)  # Plot area row
+        self.plot_tab.rowconfigure(2, weight=0)  # Buttons row
+
+        # Create second tab - "Specific capacity results"
+        self.analysis_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.analysis_tab, text="Specific capacity results")
+
+        # For now, just add a label to the second tab
+        ttk.Label(self.analysis_tab, text="Analysis will appear here after processing files.").pack(padx=20, pady=20)
+
+        # Move existing components into the first tab
+        # Create file lists frame in the plot tab
+        file_frame = ttk.Frame(self.plot_tab)
+        file_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=5)
         file_frame.grid_propagate(False)  # Prevent frame from resizing based on content
         file_frame.config(height=200)  # Fixed height for file lists section
         self._create_file_lists(file_frame)
 
-        # Create plot area in row 2
-        plot_frame = ttk.LabelFrame(self.root, text="Plot Preview")
-        plot_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        # Create plot area in the plot tab
+        plot_frame = ttk.LabelFrame(self.plot_tab, text="Plot Preview")
+        plot_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=5)
         plot_frame.grid_propagate(False)
         plot_frame.config(height=400)
         self._create_plot_area(plot_frame)
+        self.plot_frame = plot_frame  # Store reference to plot frame
 
-        # Create buttons in row 3
-        button_frame = ttk.Frame(self.root)
-        button_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=10)
+        # Create buttons in the plot tab
+        button_frame = ttk.Frame(self.plot_tab)
+        button_frame.grid(row=2, column=0, sticky="ew", padx=0, pady=10)
 
         ttk.Label(button_frame, textvariable=self.status_var).pack(side=tk.LEFT, padx=5)
 
@@ -125,6 +146,9 @@ class FileSelector:
         # Initialize file list and start status updates
         self._update_file_list()
         self._start_status_updates()
+
+        # Create a simple 3x3 table in the analysis tab
+        self._create_analysis_table()
 
         logging.debug("FILE_SELECTOR. Starting Tkinter mainloop.")
         # Starting the main loop
@@ -210,6 +234,41 @@ class FileSelector:
         if file_path:
             self.fig.savefig(file_path, dpi=300, bbox_inches='tight')
             messagebox.showinfo("Success", f"Plot saved to {file_path}")
+
+    def _create_analysis_table(self):
+        """Create a simple 3x3 table in the analysis tab."""
+        # Create a frame to hold the table
+        table_frame = ttk.Frame(self.analysis_tab)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Create a Treeview widget with 3 columns
+        columns = ("Column 1", "Column 2", "Column 3")
+        self.analysis_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=3)
+
+        # Define column headings
+        for col in columns:
+            self.analysis_table.heading(col, text=col)
+            self.analysis_table.column(col, width=150, anchor="center")
+
+        # Insert 3 empty rows
+        for i in range(3):
+            self.analysis_table.insert("", "end", values=("", "", ""))
+
+        # Add a scrollbar
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.analysis_table.yview)
+        self.analysis_table.configure(yscrollcommand=scrollbar.set)
+
+        # Place the table and scrollbar in the frame
+        self.analysis_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Add a label explaining the purpose of this tab
+        explanation = ttk.Label(
+            self.analysis_tab,
+            text="This tab will display numerical analysis of the processed data.\nProcess files in the 'Charge vs Voltage Plot' tab to see results.",
+            justify=tk.CENTER
+        )
+        explanation.pack(pady=10)
 
     # Action Methods
     def _browse_directory(self):
@@ -353,14 +412,6 @@ class FileSelector:
             return
 
         # Find the plot frame if needed
-        if not hasattr(self, 'plot_frame'):
-            for child in self.root.winfo_children():
-                if isinstance(child, ttk.LabelFrame) and child.winfo_children():
-                    if child.cget('text') == "Plot Preview":
-                        self.plot_frame = child
-                        break
-
-        # Exit if plot frame doesn't exist
         if not hasattr(self, 'plot_frame') or not self.plot_frame.winfo_exists():
             print("Warning: Plot frame no longer exists")
             return
@@ -401,6 +452,10 @@ class FileSelector:
 
             # Pack the canvas to fill the available space
             self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Update analysis tab with new data
+            self._update_analysis_table()
+
         except Exception as e:
             print(f"Error updating plot: {e}")
 
@@ -422,3 +477,9 @@ class FileSelector:
         # Add Save Plot button
         save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
         save_plot_button.pack(side=tk.RIGHT, padx=5)
+
+    def _update_analysis_table(self):
+        """Update the analysis table with data from the processed files."""
+        # This is a placeholder method that will be expanded in future steps
+        # For now, it does nothing
+        pass
