@@ -2,7 +2,7 @@ from common.imports import (
     tk, filedialog, ttk, messagebox, os,
     logging, FigureCanvasTkAgg, Figure, plt
 )
-
+from performance_stats import calculate_statistics
 
 class FileSelector:
     """A GUI for selecting and processing .ndax files with preview functionality."""
@@ -241,6 +241,10 @@ class FileSelector:
         table_frame = ttk.Frame(self.analysis_tab)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
+        # Configure the table frame grid
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
         # Create a Treeview widget with our desired columns
         columns = ("Cell ID", "Specific Charge Capacity (mAh/g)",
                    "Specific Discharge Capacity (mAh/g)", "Coulombic Efficiency (%)")
@@ -268,17 +272,24 @@ class FileSelector:
         y_scrollbar.grid(row=0, column=1, sticky="ns")
         x_scrollbar.grid(row=1, column=0, sticky="ew")
 
-        # Configure the table frame grid
-        table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
-
         # Add a label explaining the purpose of this tab
         explanation = ttk.Label(
             self.analysis_tab,
-            text="This tab displays first cycle data from processed files.\nProcess files in the 'Charge vs Voltage Plot' tab to see results.",
+            text="This tab displays first cycle data and statistics from processed files.\n"
+                 "Process files in the 'Charge vs Voltage Plot' tab to see results.",
             justify=tk.CENTER
         )
-        explanation.pack(pady=10)
+        explanation.pack(pady=10, before=table_frame)
+
+        # Add export button
+        export_frame = ttk.Frame(self.analysis_tab)
+        export_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Button(
+            export_frame,
+            text="Export Table",
+            command=self._export_analysis_table
+        ).pack(side=tk.RIGHT)
 
     # Action Methods
     def _browse_directory(self):
@@ -528,3 +539,36 @@ class FileSelector:
 
             # Insert the row into the table
             self.analysis_table.insert('', 'end', values=values)
+
+        # Calculate statistics
+        stats_df = calculate_statistics(features_df)
+
+        if stats_df is not None:
+            # Add a separator row
+            separator_id = self.analysis_table.insert('', 'end', values=('---', '---', '---', '---'))
+            self.analysis_table.item(separator_id, tags=('separator',))
+
+            # Add statistics rows
+            for _, row in stats_df.iterrows():
+                values = (
+                    row['Cell ID'],
+                    row['Specific Charge Capacity (mAh/g)'],
+                    row['Specific Discharge Capacity (mAh/g)'],
+                    row['Coulombic Efficiency (%)']
+                )
+
+                stat_id = self.analysis_table.insert('', 'end', values=values)
+                # Tag the row for potential styling
+                self.analysis_table.item(stat_id, tags=('statistic',))
+
+            # Apply styling for statistics rows
+            self.analysis_table.tag_configure('separator', background='#f0f0f0')
+            self.analysis_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
+
+    def _export_analysis_table(self):
+        """Export the analysis table to an Excel file."""
+        # This is a placeholder for future export functionality
+        messagebox.showinfo(
+            "Export Table",
+            "This feature will be implemented in a future update."
+        )
