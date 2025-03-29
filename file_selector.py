@@ -241,24 +241,54 @@ class FileSelector:
 
         # Configure the table frame grid
         table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=0)  # Header row
+        table_frame.rowconfigure(1, weight=1)  # Table row
 
-        # Create a Treeview widget with our desired columns
-        columns = ("Cell ID", "Specific Charge Capacity (mAh/g)",
-                   "Specific Discharge Capacity (mAh/g)", "Coulombic Efficiency (%)")
+        # Create a header frame for cycle labels
+        header_frame = ttk.Frame(table_frame)
+        header_frame.grid(row=0, column=0, sticky="ew")
+
+        # Create the actual table columns
+        # First define the metrics that will repeat for each cycle
+        metrics = ["Specific Charge Capacity (mAh/g)",
+                   "Specific Discharge Capacity (mAh/g)",
+                   "Coulombic Efficiency (%)"]
+
+        # Then define the complete set of columns
+        columns = ["Cell ID"]
+        for cycle in [1, 2, 3]:  # Matching the SELECTED_CYCLES from neware_plotter.py
+            for metric in metrics:
+                columns.append(f"C{cycle}: {metric}")
+
+        # Create a Treeview widget with our columns
         self.analysis_table = ttk.Treeview(table_frame, columns=columns, show="headings")
 
-        # Define column headings and widths
-        column_widths = {
-            "Cell ID": 100,
-            "Specific Charge Capacity (mAh/g)": 200,
-            "Specific Discharge Capacity (mAh/g)": 200,
-            "Coulombic Efficiency (%)": 150
-        }
+        # Create the cycle header labels
+        cell_id_label = ttk.Label(header_frame, text="", width=15, anchor="center")
+        cell_id_label.grid(row=0, column=0, padx=1, pady=1)
 
-        for col in columns:
-            self.analysis_table.heading(col, text=col)
-            self.analysis_table.column(col, width=column_widths[col], anchor="center")
+        col_index = 1
+        for cycle in [1, 2, 3]:
+            # Create a label spanning 3 columns (for the 3 metrics per cycle)
+            cycle_label = ttk.Label(header_frame, text=f"Cycle {cycle}",
+                                    width=len(metrics) * 20, anchor="center",
+                                    background="#e6e6e6", relief="solid", borderwidth=1)
+            cycle_label.grid(row=0, column=col_index, columnspan=len(metrics), padx=1, pady=1, sticky="ew")
+            col_index += len(metrics)
+
+        # Define column headings and widths for the actual table
+        self.analysis_table.heading("Cell ID", text="Cell ID")
+        self.analysis_table.column("Cell ID", width=100, anchor="center")
+
+        # Set up the metric columns for each cycle
+        col_index = 0
+        for cycle in [1, 2, 3]:
+            for metric in metrics:
+                col_name = f"C{cycle}: {metric}"
+                # Use shorter display text for column headers
+                display_text = metric.replace("Specific ", "").replace(" (mAh/g)", "").replace("Coulombic ", "")
+                self.analysis_table.heading(col_name, text=display_text)
+                self.analysis_table.column(col_name, width=120, anchor="center")
 
         # Add scrollbars
         y_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.analysis_table.yview)
@@ -266,14 +296,14 @@ class FileSelector:
         self.analysis_table.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
 
         # Place the table and scrollbars in the frame
-        self.analysis_table.grid(row=0, column=0, sticky="nsew")
-        y_scrollbar.grid(row=0, column=1, sticky="ns")
-        x_scrollbar.grid(row=1, column=0, sticky="ew")
+        self.analysis_table.grid(row=1, column=0, sticky="nsew")
+        y_scrollbar.grid(row=1, column=1, sticky="ns")
+        x_scrollbar.grid(row=2, column=0, sticky="ew")
 
         # Add a label explaining the purpose of this tab
         explanation = ttk.Label(
             self.analysis_tab,
-            text="This tab displays first cycle data and statistics from processed files.\n"
+            text="This tab displays capacity data and statistics for cycles 1-3.\n"
                  "Process files in the 'Charge vs Voltage Plot' tab to see results.",
             justify=tk.CENTER
         )
@@ -490,7 +520,7 @@ class FileSelector:
 
     def _update_analysis_table(self, features_df=None):
         """
-        Update the analysis table with data from the processed files.
+        Update the analysis table with data from the processed files for all cycles.
 
         :param features_df: DataFrame containing the extracted features.
                             If None, attempt to clear the table.
@@ -503,48 +533,49 @@ class FileSelector:
         if features_df is None or features_df.empty:
             return
 
-        # Filter data to only include first cycle
-        cycle1_data = features_df[features_df['Cycle'] == 1]
+        # Get unique cell IDs
+        cell_ids = features_df['cell ID'].unique()
 
-        # If no cycle 1 data, exit early
-        if cycle1_data.empty:
-            return
+        # Metrics we want to display
+        metrics = [
+            'Specific Charge Capacity (mAh/g)',
+            'Specific Discharge Capacity (mAh/g)',
+            'Coulombic Efficiency (%)'
+        ]
 
-        # Insert data for each cell
-        for _, row in cycle1_data.iterrows():
-            # Prepare the values to display
-            values = (
-                row.get('cell ID', 'Unknown'),
-                f"{row.get('Specific Charge Capacity (mAh/g)', 0):.1f}",
-                f"{row.get('Specific Discharge Capacity (mAh/g)', 0):.1f}",
-                f"{row.get('Coulombic Efficiency (%)', 0):.1f}"
-            )
+        # Process data for each cell ID
+        for cell_id in cell_ids:
+            cell_data = features_df[features_df['cell ID'] == cell_id]
+
+            # Create a row for this cell with values for all cycles
+            row_values = [cell_id]
+
+            # Add data for each cycle
+            for cycle in [1, 2, 3]:
+                cycle_data = cell_data[cell_data['Cycle'] == cycle]
+
+                # If we have data for this cycle, add it to the row
+                if not cycle_data.empty:
+                    for metric in metrics:
+                        value = cycle_data.iloc[0].get(metric, 0)
+                        row_values.append(f"{float(value):.1f}" if pd.notnull(value) else "-")
+                else:
+                    # No data for this cycle, add placeholder values
+                    row_values.extend(["-", "-", "-"])
 
             # Insert the row into the table
-            self.analysis_table.insert('', 'end', values=values)
+            self.analysis_table.insert('', 'end', values=row_values)
 
-        # Calculate statistics
-        stats_df = calculate_statistics(features_df)
-
-        if stats_df is not None:
+        # Calculate and display statistics (mean, std dev, etc.)
+        if len(self.analysis_table.get_children()) > 0:
             # Add a separator row
-            separator_id = self.analysis_table.insert('', 'end', values=('---', '---', '---', '---'))
+            separator_id = self.analysis_table.insert('', 'end', values=['-'] * len(row_values))
             self.analysis_table.item(separator_id, tags=('separator',))
 
             # Add statistics rows
-            for _, row in stats_df.iterrows():
-                values = (
-                    row['Cell ID'],
-                    row['Specific Charge Capacity (mAh/g)'],
-                    row['Specific Discharge Capacity (mAh/g)'],
-                    row['Coulombic Efficiency (%)']
-                )
+            self._add_statistics_rows(features_df, metrics)
 
-                stat_id = self.analysis_table.insert('', 'end', values=values)
-                # Tag the row for potential styling
-                self.analysis_table.item(stat_id, tags=('statistic',))
-
-            # Apply styling for statistics rows
+            # Apply styling
             self.analysis_table.tag_configure('separator', background='#f0f0f0')
             self.analysis_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
 
@@ -587,3 +618,41 @@ class FileSelector:
         except Exception as e:
             messagebox.showerror("Export Failed", f"An error occurred: {str(e)}")
             logging.debug(f"FILE_SELECTOR. Error exporting table data: {e}")
+
+    def _add_statistics_rows(self, features_df, metrics):
+        """Add statistics rows to the analysis table for all cycles."""
+        # For each statistic type (mean, std dev, rsd)
+        stat_types = [
+            ('Average', 'mean', '{:.1f}'),
+            ('Std Dev', 'std', '{:.1f}'),
+            ('RSD (%)', lambda x: (x.std() / x.mean() * 100) if x.mean() != 0 else float('nan'), '{:.1f}')
+        ]
+
+        for label, func, format_str in stat_types:
+            row_values = [label]
+
+            # Calculate statistics for each cycle and metric
+            for cycle in [1, 2, 3]:
+                cycle_data = features_df[features_df['Cycle'] == cycle]
+
+                if not cycle_data.empty:
+                    for metric in metrics:
+                        if metric in cycle_data.columns:
+                            values = pd.to_numeric(cycle_data[metric], errors='coerce')
+
+                            if callable(func):
+                                stat = func(values)
+                            else:
+                                stat = getattr(values, func)()
+
+                            # Use format method instead of f-string with format specifier
+                            row_values.append(format_str.format(stat) if pd.notnull(stat) else "-")
+                        else:
+                            row_values.append("-")
+                else:
+                    # No data for this cycle
+                    row_values.extend(["-", "-", "-"])
+
+            # Insert the statistics row
+            stat_id = self.analysis_table.insert('', 'end', values=row_values)
+            self.analysis_table.item(stat_id, tags=('statistic',))

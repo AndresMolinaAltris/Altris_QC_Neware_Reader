@@ -20,7 +20,7 @@ configure_logging(base_directory)
 logging.debug("MAIN. QC Neware Reader Started")
 
 def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
-                  gui_callback=None):
+                  save_plots_dir=None,gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
     """
