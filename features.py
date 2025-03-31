@@ -189,7 +189,8 @@ class Features:
             logging.debug(f"Error calculating dQ/dV: {e}")
             return None
 
-    def _calculate_dqdv(self, data, direction, mass=1.0):
+    def _calculate_dqdv(self, data, direction, mass=1.0, smoothing_method='sma', window_length=15, weights=None):
+
         """
         Helper method to calculate dQ/dV for either charge or discharge data.
 
@@ -212,7 +213,7 @@ class Features:
             data = data.sort_values('Voltage', ascending=False)
             capacity_col = 'Discharge_Capacity(mAh)'
 
-        # Drop duplicates to reduce noise (like in DiffCapAnalyzer)
+        # Drop duplicates to reduce noise
         data = data.drop_duplicates(subset=['Voltage'])
         data = data.reset_index(drop=True)
 
@@ -255,7 +256,19 @@ class Features:
         specific_dqdv = dqdv / mass
 
         # Apply Savitzky-Golay filter for smoothing (from DiffCapAnalyzer)
-        smoothed_dqdv = self._apply_savgol_filter(specific_dqdv)
+        # smoothed_dqdv = self._apply_savgol_filter(specific_dqdv)
+
+        # Apply smoothing based on method
+        if smoothing_method == 'savgol':
+            smoothed_dqdv = self._apply_savgol_filter(specific_dqdv, window_length)
+        elif smoothing_method in ['sma', 'wma', 'ema']:
+            smoothed_dqdv = self._apply_moving_average(
+                specific_dqdv,
+                window_length=window_length,
+                method=smoothing_method,
+                weights=weights)
+
+
 
         return {
             'voltage': v_mid,
@@ -290,4 +303,71 @@ class Features:
             return smoothed
         except Exception:
             # If filtering fails, return original data
+            return data
+
+    def _apply_moving_average(self, data, window_length=15, method='sma', weights=None):
+        """
+        Apply different types of moving averages to smooth data.
+
+        Args:
+            data (np.ndarray): Input data array to be smoothed
+            window_length (int): Size of the moving window (must be odd)
+            method (str): Type of moving average - 'sma', 'wma', or 'ema'
+            weights (list, optional): Custom weights for Weighted Moving Average
+
+        Returns:
+            np.ndarray: Smoothed data array
+        """
+
+        # Ensure we have enough data points for filtering
+        if len(data) < window_length:
+            return data
+
+        # Ensure window length is odd
+        if window_length % 2 == 0:
+            window_length += 1
+
+        # Half window for symmetric padding
+        half_window = window_length // 2
+
+        try:
+            if method == 'sma':
+                # Simple Moving Average
+                smoothed = np.convolve(data, np.ones(window_length) / window_length, mode='same')
+
+            elif method == 'wma':
+                # Weighted Moving Average
+                if weights is None:
+                    # Default: linear increasing weights
+                    weights = np.arange(1, window_length + 1)
+
+                # Normalize weights
+                weights = np.array(weights) / np.sum(weights)
+
+                # Pad the data symmetrically
+                padded_data = np.pad(data, (half_window, half_window), mode='reflect')
+
+                # Compute weighted moving average
+                smoothed = np.zeros_like(data)
+                for i in range(len(data)):
+                    window = padded_data[i:i + window_length]
+                    smoothed[i] = np.sum(window * weights)
+
+            elif method == 'ema':
+                # Exponential Moving Average
+                alpha = 2 / (window_length + 1)
+                smoothed = np.zeros_like(data)
+                smoothed[0] = data[0]
+
+                for i in range(1, len(data)):
+                    smoothed[i] = alpha * data[i] + (1 - alpha) * smoothed[i - 1]
+
+            else:
+                raise ValueError(f"Unsupported moving average method: {method}")
+
+            return smoothed
+
+        except Exception as e:
+            # If filtering fails, return original data
+            print(f"Moving average smoothing failed: {e}")
             return data

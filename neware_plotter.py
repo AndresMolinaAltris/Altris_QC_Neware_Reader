@@ -253,7 +253,7 @@ class NewarePlotter:
         Returns:
             fig: The matplotlib figure object created
         """
-        cycles = [1, 2, 3]  # Same as SELECTED_CYCLES
+        cycles = SELECTED_CYCLES
 
         # Create a figure with a 2x2 grid - the top row will have 3 plots side by side,
         # and the bottom row will be used for the legend
@@ -302,8 +302,7 @@ class NewarePlotter:
                 ax.set_ylabel("dQ/dV (mAh/g·V)")
                 ax.set_title(f"Cycle {cycle}")
                 ax.grid(True)
-                # Set reasonable limits focusing on the important voltage range
-                ax.set_xlim(2.5, 4.5)  # Typical Li-ion battery voltage range
+                ax.set_xlim(2.75, 3.75)
 
         # Create a legend axis spanning the bottom row
         legend_ax = fig.add_subplot(gs[1, :])
