@@ -758,15 +758,53 @@ class FileSelector:
             print("Warning: dQ/dV tab no longer exists")
             return
 
-        # Update the figure
-        if hasattr(self, 'dqdv_canvas'):
-            # Clear previous figure
-            plt.close(self.dqdv_fig)
-            self.dqdv_fig = fig
+        # Find the plot frame in the dQ/dV tab
+        plot_frame = None
+        for child in self.dqdv_tab.winfo_children():
+            if isinstance(child, ttk.LabelFrame) and child.cget("text") == "dQ/dV Plot Preview":
+                plot_frame = child
+                break
 
-            # Update canvas with new figure
-            self.dqdv_canvas.figure = self.dqdv_fig
-            self.dqdv_canvas.draw()
+        if not plot_frame:
+            print("Warning: dQ/dV plot frame not found")
+            return
+
+        # Completely clear the plot frame
+        for widget in list(plot_frame.winfo_children()):
+            try:
+                widget.destroy()
+            except tk.TclError:
+                # Widget might already be destroyed, just continue
+                pass
+
+        # Store the new figure
+        self.dqdv_fig = fig
+
+        # Create a fixed-height button container at the bottom
+        button_container = ttk.Frame(plot_frame, height=40)
+        button_container.pack(side=tk.BOTTOM, fill=tk.X)
+        button_container.pack_propagate(False)  # Prevent shrinking
+
+        # Add Save Plot button
+        save_plot_button = ttk.Button(button_container, text="Save Plot",
+                                      command=lambda: self._save_current_plot(plot_type="dqdv"))
+        save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
+
+        # Create plot container for the canvas
+        plot_container = ttk.Frame(plot_frame)
+        plot_container.pack(fill=tk.BOTH, expand=True)
+
+        # Create a new canvas with the figure
+        self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
+
+        # Make sure the figure fits properly in the available space
+        self.dqdv_fig.tight_layout()
+
+        # Draw the canvas
+        self.dqdv_canvas.draw()
+
+        # Pack the canvas to fill the available space
+        self.dqdv_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         # Update statistics table if provided
         if dqdv_stats and hasattr(self, 'dqdv_stats_table'):
