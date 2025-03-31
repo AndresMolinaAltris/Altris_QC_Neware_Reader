@@ -20,43 +20,6 @@ class FileSelector:
         self.fig = None
         self.canvas = None
 
-    def _comprehensive_cleanup(self):
-        """Comprehensive cleanup of all resources before window destruction."""
-        logging.debug("FILE_SELECTOR. Comprehensive cleanup started.")
-
-        # Cancel any pending after events
-        if hasattr(self, '_status_update_id') and self._status_update_id:
-            logging.debug("FILE_SELECTOR. Canceling pending after events.")
-            self.root.after_cancel(self._status_update_id)
-            self._status_update_id = None
-
-        # Clean up matplotlib resources
-        logging.debug("FILE_SELECTOR. Closing all matplotlib figures.")
-        plt.close('all')
-
-        # Set matplotlib to non-interactive mode
-        logging.debug("FILE_SELECTOR. Setting matplotlib to non-interactive mode.")
-        plt.ioff()
-
-        logging.debug("FILE_SELECTOR. Comprehensive cleanup completed.")
-
-    def _cleanup(self):
-        """Basic cleanup resources before window destruction - kept for backward compatibility."""
-        logging.debug("FILE_SELECTOR. Cleanup method called.")
-        # Call the comprehensive cleanup instead
-        self._comprehensive_cleanup()
-        logging.debug("FILE_SELECTOR. Cleanup completed.")
-
-    def _on_window_close(self):
-        """Handle window close event when the X button is clicked."""
-        logging.debug("FILE_SELECTOR. Window close (X button) detected.")
-        # Use the comprehensive cleanup
-        self._comprehensive_cleanup()
-
-        logging.debug("FILE_SELECTOR. Destroying window from X button.")
-        self.root.destroy()
-        logging.debug("FILE_SELECTOR. Window destroyed from X button close.")
-
     def show_interface(self, process_callback=None):
         """
         Display the file selector interface and handle file selection/processing.
@@ -110,6 +73,10 @@ class FileSelector:
         # For now, just add a label to the second tab
         ttk.Label(self.analysis_tab, text="Analysis will appear here after processing files.").pack(padx=20, pady=20)
 
+        # Create the differential capacity tab
+        self.dqdv_tab = self._create_dqdv_tab()
+        self.notebook.add(self.dqdv_tab, text="Differential Capacity")
+
         # Move existing components into the first tab
         # Create file lists frame in the plot tab
         file_frame = ttk.Frame(self.plot_tab)
@@ -157,6 +124,43 @@ class FileSelector:
         if not process_callback:
             return self.selected_files
         return None
+
+    def _comprehensive_cleanup(self):
+        """Comprehensive cleanup of all resources before window destruction."""
+        logging.debug("FILE_SELECTOR. Comprehensive cleanup started.")
+
+        # Cancel any pending after events
+        if hasattr(self, '_status_update_id') and self._status_update_id:
+            logging.debug("FILE_SELECTOR. Canceling pending after events.")
+            self.root.after_cancel(self._status_update_id)
+            self._status_update_id = None
+
+        # Clean up matplotlib resources
+        logging.debug("FILE_SELECTOR. Closing all matplotlib figures.")
+        plt.close('all')
+
+        # Set matplotlib to non-interactive mode
+        logging.debug("FILE_SELECTOR. Setting matplotlib to non-interactive mode.")
+        plt.ioff()
+
+        logging.debug("FILE_SELECTOR. Comprehensive cleanup completed.")
+
+    def _cleanup(self):
+        """Basic cleanup resources before window destruction - kept for backward compatibility."""
+        logging.debug("FILE_SELECTOR. Cleanup method called.")
+        # Call the comprehensive cleanup instead
+        self._comprehensive_cleanup()
+        logging.debug("FILE_SELECTOR. Cleanup completed.")
+
+    def _on_window_close(self):
+        """Handle window close event when the X button is clicked."""
+        logging.debug("FILE_SELECTOR. Window close (X button) detected.")
+        # Use the comprehensive cleanup
+        self._comprehensive_cleanup()
+
+        logging.debug("FILE_SELECTOR. Destroying window from X button.")
+        self.root.destroy()
+        logging.debug("FILE_SELECTOR. Window destroyed from X button close.")
 
     def _create_file_lists(self, parent):
         """Create the available and selected file list components."""
@@ -218,9 +222,20 @@ class FileSelector:
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    def _save_current_plot(self):
-        """Save the current plot to a file."""
-        if not hasattr(self, 'fig') or self.fig is None:
+    def _save_current_plot(self, plot_type="capacity"):
+        """
+        Save the current plot to a file.
+
+        Args:
+            plot_type: String indicating the type of plot to save ('capacity' or 'dqdv')
+        """
+        fig = None
+        if plot_type == "capacity" and hasattr(self, 'fig'):
+            fig = self.fig
+        elif plot_type == "dqdv" and hasattr(self, 'dqdv_fig'):
+            fig = self.dqdv_fig
+
+        if fig is None:
             messagebox.showinfo("No Plot", "There is no plot to save.")
             return
 
@@ -230,7 +245,7 @@ class FileSelector:
         )
 
         if file_path:
-            self.fig.savefig(file_path, dpi=300, bbox_inches='tight')
+            fig.savefig(file_path, dpi=300, bbox_inches='tight')
             messagebox.showinfo("Success", f"Plot saved to {file_path}")
 
     def _create_analysis_table(self):
@@ -318,6 +333,74 @@ class FileSelector:
             text="Export Table",
             command=self._export_analysis_table
         ).pack(side=tk.RIGHT)
+
+    def _create_dqdv_tab(self):
+        """Create the Differential Capacity tab with plot area and statistics."""
+        dqdv_tab = ttk.Frame(self.notebook)
+
+        # Configure the grid for the dQ/dV tab
+        dqdv_tab.columnconfigure(0, weight=1)
+        dqdv_tab.rowconfigure(0, weight=4)  # Main plot area (larger)
+        dqdv_tab.rowconfigure(1, weight=1)  # Statistics area (smaller)
+
+        # Create plot area
+        plot_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Plot Preview")
+        plot_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
+
+        # Create a container frame with fixed height for the save button
+        button_container = ttk.Frame(plot_frame, height=40)
+        button_container.pack(side=tk.BOTTOM, fill=tk.X)
+        button_container.pack_propagate(False)  # Prevent shrinking
+
+        # Add Save Plot button
+        save_plot_button = ttk.Button(button_container, text="Save Plot",
+                                      command=lambda: self._save_current_plot(plot_type="dqdv"))
+        save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
+
+        # Create the actual plot area
+        plot_container = ttk.Frame(plot_frame)
+        plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+
+        # Create a Figure and add it to a canvas
+        self.dqdv_fig = Figure(figsize=(8, 4))
+        self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
+        self.dqdv_canvas.draw()
+        self.dqdv_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Create statistics area
+        stats_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Statistics")
+        stats_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+
+        # Add explanatory text
+        ttk.Label(stats_frame,
+                  text="This section will display peak statistics for the dQ/dV curves "
+                       "including peak positions, heights, and areas.",
+                  justify=tk.CENTER).pack(pady=10)
+
+        # Create a frame for the statistics table
+        table_frame = ttk.Frame(stats_frame)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Create columns for the table
+        columns = ["File", "Cycle", "Peak Type", "Voltage (V)", "Height (mAh/g·V)"]
+
+        # Create the table
+        self.dqdv_stats_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=5)
+
+        # Configure column headings
+        for col in columns:
+            self.dqdv_stats_table.heading(col, text=col)
+            self.dqdv_stats_table.column(col, width=100, anchor="center")
+
+        # Add scrollbars
+        y_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.dqdv_stats_table.yview)
+        self.dqdv_stats_table.configure(yscrollcommand=y_scrollbar.set)
+
+        # Place the table and scrollbar
+        self.dqdv_stats_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        return dqdv_tab
 
     # Action Methods
     def _browse_directory(self):
@@ -656,3 +739,47 @@ class FileSelector:
             # Insert the statistics row
             stat_id = self.analysis_table.insert('', 'end', values=row_values)
             self.analysis_table.item(stat_id, tags=('statistic',))
+
+    def update_dqdv_plot(self, fig, dqdv_stats=None):
+        """
+        Update the dQ/dV plot in the GUI with a new figure and statistics.
+
+        Args:
+            fig: The matplotlib figure containing dQ/dV plots
+            dqdv_stats: Optional list of dictionaries with peak statistics
+        """
+        # Check if root window still exists
+        if not hasattr(self, 'root') or not self.root.winfo_exists():
+            print("Warning: Attempted to update dQ/dV plot after window was closed")
+            return
+
+        # Check if we have the dqdv_tab attribute
+        if not hasattr(self, 'dqdv_tab') or not self.dqdv_tab.winfo_exists():
+            print("Warning: dQ/dV tab no longer exists")
+            return
+
+        # Update the figure
+        if hasattr(self, 'dqdv_canvas'):
+            # Clear previous figure
+            plt.close(self.dqdv_fig)
+            self.dqdv_fig = fig
+
+            # Update canvas with new figure
+            self.dqdv_canvas.figure = self.dqdv_fig
+            self.dqdv_canvas.draw()
+
+        # Update statistics table if provided
+        if dqdv_stats and hasattr(self, 'dqdv_stats_table'):
+            # Clear existing items
+            for item in self.dqdv_stats_table.get_children():
+                self.dqdv_stats_table.delete(item)
+
+            # Add new statistics
+            for stat in dqdv_stats:
+                self.dqdv_stats_table.insert('', 'end', values=[
+                    stat.get('File', ''),
+                    stat.get('Cycle', ''),
+                    stat.get('Peak Type', ''),
+                    f"{stat.get('Voltage', 0):.3f}",
+                    f"{stat.get('Height', 0):.3f}"
+                ])

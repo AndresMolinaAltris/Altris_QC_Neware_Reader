@@ -1,4 +1,7 @@
+import logging
+
 from common.imports import np, pd
+from scipy.signal import savgol_filter
 
 class Features:
     """
@@ -145,3 +148,146 @@ class Features:
                 features["Coulombic Efficiency (%)"] = np.nan
         except Exception:
             features["Coulombic Efficiency (%)"] = np.nan
+
+    def extract_dqdv(self, df, cycle, mass=1.0):
+        """
+        Calculates differential capacity (dQ/dV) for both charge and discharge cycles.
+
+        Uses methodology adapted from DiffCapAnalyzer for robust dQ/dV calculations
+        with appropriate data cleaning and smoothing.
+
+        Args:
+            df: pandas DataFrame containing experimental data
+            cycle: Integer representing the cycle number to extract data from
+            mass: Float representing the mass of active material (default: 1.0 g)
+
+        Returns:
+            Dictionary containing dQ/dV data for charge and discharge
+        """
+        try:
+            # Filter data for the specified cycle
+            cycle_df = df[df["Cycle"] == int(cycle)].copy()
+
+            # Define a minimum number of points required for proper calculation
+            if len(cycle_df) < 10:
+                return None
+
+            # Separate charge and discharge data
+            charge_data = cycle_df[cycle_df["Status"] == "CC_Chg"].copy()
+            discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
+
+            # Get dQ/dV data for charge and discharge
+            charge_dqdv = self._calculate_dqdv(charge_data, 'charge', mass)
+            discharge_dqdv = self._calculate_dqdv(discharge_data, 'discharge', mass)
+
+            return {
+                'charge': charge_dqdv,
+                'discharge': discharge_dqdv
+            }
+
+        except Exception as e:
+            logging.debug(f"Error calculating dQ/dV: {e}")
+            return None
+
+    def _calculate_dqdv(self, data, direction, mass=1.0):
+        """
+        Helper method to calculate dQ/dV for either charge or discharge data.
+
+        Args:
+            data: DataFrame containing either charge or discharge data
+            direction: String indicating 'charge' or 'discharge'
+            mass: Active material mass in g
+
+        Returns:
+            Dictionary with voltage, dQ/dV data and smoothed dQ/dV data
+        """
+        if data.empty or len(data) < 10:
+            return None
+
+        # Sort by voltage to ensure proper calculation
+        if direction == 'charge':
+            data = data.sort_values('Voltage', ascending=True)
+            capacity_col = 'Charge_Capacity(mAh)'
+        else:
+            data = data.sort_values('Voltage', ascending=False)
+            capacity_col = 'Discharge_Capacity(mAh)'
+
+        # Drop duplicates to reduce noise (like in DiffCapAnalyzer)
+        data = data.drop_duplicates(subset=['Voltage'])
+        data = data.reset_index(drop=True)
+
+        # Calculate dV and dQ
+        voltage = data['Voltage'].values
+        capacity = data[capacity_col].values
+
+        # Calculate differences
+        dv = np.diff(voltage)
+        dq = np.diff(capacity)
+
+        # Prevent division by zero
+        mask = np.abs(dv) > 1e-10
+
+        if not np.any(mask):
+            return None
+
+        # Calculate dQ/dV
+        dqdv = np.zeros_like(dv)
+        dqdv[mask] = dq[mask] / dv[mask]
+
+        # Use voltage midpoints
+        v_mid = (voltage[:-1] + voltage[1:]) / 2
+
+        # Remove invalid values (infinity, NaN)
+        valid_mask = np.isfinite(dqdv)
+        v_mid = v_mid[valid_mask]
+        dqdv = dqdv[valid_mask]
+
+        # Further filtering (optional)
+        if direction == 'charge':
+            filter_mask = dqdv >= 0  # Keep positive dQ/dV for charge
+        else:
+            filter_mask = dqdv <= 0  # Keep negative dQ/dV for discharge
+
+        v_mid = v_mid[filter_mask]
+        dqdv = dqdv[filter_mask]
+
+        # Normalize by mass if needed
+        specific_dqdv = dqdv / mass
+
+        # Apply Savitzky-Golay filter for smoothing (from DiffCapAnalyzer)
+        smoothed_dqdv = self._apply_savgol_filter(specific_dqdv)
+
+        return {
+            'voltage': v_mid,
+            'dqdv': specific_dqdv,
+            'smoothed_dqdv': smoothed_dqdv
+        }
+
+    def _apply_savgol_filter(self, data, window_length=15, polyorder=3):
+        """
+        Apply Savitzky-Golay filter to smooth dQ/dV data.
+
+        Args:
+            data: Array of dQ/dV values to smooth
+            window_length: Window length for filter (must be odd)
+            polyorder: Polynomial order for filter
+
+        Returns:
+            Smoothed data array
+        """
+
+        # Ensure we have enough data points for the filter
+        if len(data) < window_length:
+            return data
+
+        # Ensure window length is odd
+        if window_length % 2 == 0:
+            window_length += 1
+
+        # Apply filter
+        try:
+            smoothed = savgol_filter(data, window_length, polyorder)
+            return smoothed
+        except Exception:
+            # If filtering fails, return original data
+            return data

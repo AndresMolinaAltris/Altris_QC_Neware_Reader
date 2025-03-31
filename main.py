@@ -1,10 +1,12 @@
 import sys
-from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA
+from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA, np
 from common.project_imports import (
     extract_cell_id, extract_sample_name, Features,
     CellDatabase, NewarePlotter, FileSelector,
     configure_logging
 )
+
+from scipy.signal import find_peaks
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -19,8 +21,9 @@ configure_logging(base_directory)
 # Log the start of the program
 logging.debug("MAIN. QC Neware Reader Started")
 
+
 def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
-                  save_plots_dir=None,gui_callback=None):
+                  save_plots_dir=None, gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
     """
@@ -28,6 +31,9 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
 
     # Initialize an empty DataFrame to store extracted features
     all_features = []
+
+    # Dictionary to store dQ/dV data
+    dqdv_data = {}
 
     # Create a cache for the processed NDAX files
     ndax_data_cache = {}
@@ -55,6 +61,9 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
         # Create a Features object once per file
         features_obj = Features(file)
 
+        # Initialize dQ/dV data dictionary for this file
+        dqdv_data[filename_stem] = {}
+
         # Process multiple cycles
         for cycle in range(1, 4):  # Cycles 1, 2, 3
             logging.debug(f"MAIN.Extracting features for CYCLE {cycle}")
@@ -72,6 +81,11 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
             # Append results to list
             all_features.append(feature_df)
 
+            # Calculate dQ/dV data for this cycle
+            dqdv_result = features_obj.extract_dqdv(df, cycle, mass)
+            if dqdv_result:
+                dqdv_data[filename_stem][cycle] = dqdv_result
+
     # Combine all results into a single DataFrame
     if all_features:
         final_features_df = pd.concat(all_features, ignore_index=True)
@@ -86,6 +100,7 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
             try:
                 logging.debug("MAIN.Generating capacity plots...")
                 plotter = NewarePlotter(db)
+
                 # Pass the cached data to avoid reading files again
                 fig = plotter.plot_ndax_files(
                     ndax_file_list,
@@ -93,6 +108,22 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
                     display_plot=False,
                     gui_callback=gui_callback
                 )
+
+                # Generate dQ/dV plots
+                logging.debug("MAIN.Generating dQ/dV plots...")
+                dqdv_fig = plotter.plot_dqdv_curves(
+                    ndax_file_list,
+                    dqdv_data=dqdv_data,
+                    display_plot=False,
+                    gui_callback=None  # We'll update manually
+                )
+
+                # If we have a GUI and dQ/dV plot, update the dQ/dV tab
+                if gui_callback and dqdv_fig and hasattr(gui_callback.__self__, 'update_dqdv_plot'):
+                    # Extract peak statistics
+                    dqdv_stats = extract_dqdv_stats(dqdv_data)
+                    gui_callback.__self__.update_dqdv_plot(dqdv_fig, dqdv_stats)
+
                 logging.debug("MAIN.Plotting complete.")
 
             except Exception as e:
@@ -103,6 +134,70 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
     else:
         logging.debug("MAIN.No features extracted, process_files func finished.")
         return pd.DataFrame()
+
+
+def extract_dqdv_stats(dqdv_data):
+    """
+    Extract key statistics from dQ/dV data for display in the UI.
+
+    Args:
+        dqdv_data: Dictionary containing dQ/dV data for files and cycles
+
+    Returns:
+        List of dictionaries with peak statistics
+    """
+
+    stats = []
+
+    for file_name, cycles in dqdv_data.items():
+        for cycle, cycle_data in cycles.items():
+            # Process charge data
+            if 'charge' in cycle_data and cycle_data['charge'] is not None:
+                charge = cycle_data['charge']
+                voltage = charge['voltage']
+                dqdv = charge['smoothed_dqdv']
+
+                if len(dqdv) > 5:  # Need enough points to find peaks
+                    try:
+                        # Find peaks in the charge data
+                        peaks, _ = find_peaks(dqdv, height=0.1 * np.max(dqdv), distance=5)
+
+                        # Add statistics for the most prominent peaks
+                        for i, peak_idx in enumerate(peaks[:3]):  # Up to 3 peaks
+                            stats.append({
+                                'File': file_name,
+                                'Cycle': cycle,
+                                'Peak Type': f'Charge Peak {i + 1}',
+                                'Voltage': voltage[peak_idx],
+                                'Height': dqdv[peak_idx]
+                            })
+                    except Exception:
+                        pass
+
+            # Process discharge data
+            if 'discharge' in cycle_data and cycle_data['discharge'] is not None:
+                discharge = cycle_data['discharge']
+                voltage = discharge['voltage']
+                dqdv = discharge['smoothed_dqdv']
+
+                if len(dqdv) > 5:  # Need enough points to find peaks
+                    try:
+                        # Find peaks in the absolute discharge data
+                        peaks, _ = find_peaks(np.abs(dqdv), height=0.1 * np.max(np.abs(dqdv)), distance=5)
+
+                        # Add statistics for the most prominent peaks
+                        for i, peak_idx in enumerate(peaks[:3]):  # Up to 3 peaks
+                            stats.append({
+                                'File': file_name,
+                                'Cycle': cycle,
+                                'Peak Type': f'Discharge Peak {i + 1}',
+                                'Voltage': voltage[peak_idx],
+                                'Height': dqdv[peak_idx]
+                            })
+                    except Exception:
+                        pass
+
+    return stats
 
 
 def main():
@@ -181,9 +276,7 @@ def main():
 
         # Process current batch of files
         batch_number = len(all_processed_features) + 1
-        #batch_output = f"batch_{batch_number}_{output_file}"
         batch_output = None
-
 
         # Process files with plotting enabled
         features_df = process_files(
@@ -198,12 +291,6 @@ def main():
         if not features_df.empty:
             all_processed_features.append(features_df)
             logging.debug(f"MAIN.Features processed successfully")
-
-            # Combine all batches processed so far
-            #if len(all_processed_features) > 1:
-            #    combined_df = pd.concat(all_processed_features, ignore_index=True)
-            #    combined_df.to_excel(output_file, index=False)
-            #    logging.debug(f"MAIN.All results combined and saved to {output_file}")
 
             # Return the current batch features DataFrame
             return features_df

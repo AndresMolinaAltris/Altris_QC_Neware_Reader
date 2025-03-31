@@ -236,3 +236,126 @@ class NewarePlotter:
 
         logging.debug("NEWARE_PLOTTER.plot_ndax_files func finished")
         return fig
+
+    def create_dqdv_plot(self, files_data, dqdv_data, display_plot=False):
+        """
+        Creates plots for the specified files showing dQ/dV curves.
+
+        Generates a figure with three subplots (one for each cycle), showing
+        dQ/dV vs. voltage curves for both charge and discharge.
+        Different files are represented with different colors.
+
+        Args:
+            files_data (dict): Dictionary mapping file names to processed DataFrames
+            dqdv_data (dict): Dictionary containing dQ/dV data for each file and cycle
+            display_plot (bool): Whether to display the plot
+
+        Returns:
+            fig: The matplotlib figure object created
+        """
+        cycles = [1, 2, 3]  # Same as SELECTED_CYCLES
+
+        # Create a figure with a 2x2 grid - the top row will have 3 plots side by side,
+        # and the bottom row will be used for the legend
+        fig = plt.figure(figsize=(15, 5))
+
+        # Create a grid layout with more control
+        gs = gridspec.GridSpec(2, 3, height_ratios=[4, 0.2])  # 2 rows, 3 columns, with top row 4x taller
+
+        # Dictionary to store handles for the legend
+        legend_handles = {}
+
+        # Plot individual cycles
+        for idx, cycle in enumerate(cycles[:3]):  # Up to 3 individual cycles
+            ax = fig.add_subplot(gs[0, idx])  # Place in top row
+
+            for file_idx, (file_name, _) in enumerate(files_data.items()):
+                color = self.colors[file_idx % len(self.colors)]
+                legend_name = self.extract_legend_name(file_name)
+
+                # Get dQ/dV data for this file and cycle if available
+                if file_name in dqdv_data and cycle in dqdv_data[file_name]:
+                    cycle_dqdv = dqdv_data[file_name][cycle]
+
+                    # Plot charge data if available
+                    if 'charge' in cycle_dqdv and cycle_dqdv['charge'] is not None:
+                        charge_data = cycle_dqdv['charge']
+                        ax.plot(charge_data['voltage'], charge_data['smoothed_dqdv'],
+                                linestyle=self.line_styles[0], color=color,
+                                label=f"{legend_name} (Charge)")
+
+                    # Plot discharge data if available
+                    if 'discharge' in cycle_dqdv and cycle_dqdv['discharge'] is not None:
+                        discharge_data = cycle_dqdv['discharge']
+                        # For discharge, we often invert the sign for better visualization
+                        discharge_dqdv = -discharge_data['smoothed_dqdv'] if discharge_data['smoothed_dqdv'][0] < 0 else \
+                        discharge_data['smoothed_dqdv']
+                        ax.plot(discharge_data['voltage'], discharge_dqdv,
+                                linestyle=self.line_styles[1], color=color,
+                                label=f"{legend_name} (Discharge)")
+
+                    # Add to legend handles
+                    if legend_name not in legend_handles:
+                        legend_handles[legend_name] = ax.plot([], [], color=color, label=legend_name)[0]
+
+                ax.set_xlabel("Voltage (V)")
+                ax.set_ylabel("dQ/dV (mAh/g·V)")
+                ax.set_title(f"Cycle {cycle}")
+                ax.grid(True)
+                # Set reasonable limits focusing on the important voltage range
+                ax.set_xlim(2.5, 4.5)  # Typical Li-ion battery voltage range
+
+        # Create a legend axis spanning the bottom row
+        legend_ax = fig.add_subplot(gs[1, :])
+        legend_ax.axis('off')  # Hide the axis
+
+        # Add legend with sample names to the dedicated legend axis
+        sample_handles = list(legend_handles.values())
+        sample_labels = list(legend_handles.keys())
+
+        legend_ax.legend(handles=sample_handles, labels=sample_labels,
+                         loc='center', ncol=len(sample_handles))
+
+        plt.tight_layout()
+
+        if display_plot:
+            plt.show()
+
+        return fig
+
+    def plot_dqdv_curves(self, file_paths, dqdv_data=None, display_plot=False, gui_callback=None):
+        """
+        Process multiple NDAX files and create a combined dQ/dV plot.
+
+        Args:
+            file_paths (list): List of paths to NDAX files
+            dqdv_data (dict, optional): Pre-processed dQ/dV data
+            display_plot (bool): Whether to display the plot
+            gui_callback (callable, optional): Function to call with the figure for GUI display
+
+        Returns:
+            fig: The matplotlib figure object
+        """
+        logging.debug("NEWARE_PLOTTER.plot_dqdv_curves func started.")
+
+        # Get all files data first for consistency
+        files_data = {}
+        for file_path in file_paths:
+            file_name, _ = self.preprocess_ndax_file(file_path)
+            if file_name is not None:
+                files_data[file_name] = None  # We just need the file names for plotting
+
+        # If no valid data, exit early
+        if not files_data:
+            logging.debug("NEWARE_PLOTTER.No valid data to plot dQ/dV curves.")
+            return None
+
+        # Create the dQ/dV plot
+        fig = self.create_dqdv_plot(files_data, dqdv_data, display_plot)
+
+        # If a GUI callback was provided, send the figure to it
+        if gui_callback and fig is not None:
+            gui_callback(fig)
+
+        logging.debug("NEWARE_PLOTTER.plot_dqdv_curves func finished")
+        return fig
