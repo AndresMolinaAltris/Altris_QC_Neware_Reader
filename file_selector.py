@@ -247,7 +247,7 @@ class FileSelector:
         if file_path:
             fig.savefig(file_path, dpi=300, bbox_inches='tight')
             messagebox.showinfo("Success", f"Plot saved to {file_path}")
-
+            
     def _create_analysis_table(self):
         """Create a table in the analysis tab to display specific capacity results."""
         # Create a frame to hold the table

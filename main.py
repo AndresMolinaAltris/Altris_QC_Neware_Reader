@@ -303,22 +303,9 @@ def main():
 
     # When the GUI is closed, we're done
     logging.debug("MAIN. File selection window closed. Processing complete.")
-
-    # Combine all batches if there were multiple
-    #if len(all_processed_features) > 1:
-    #    logging.debug("MAIN.Combining all processed batches...")
-    #    final_df = pd.concat(all_processed_features, ignore_index=True)
-    #    final_df.to_excel(output_file, index=False)
-    #    logging.debug(f"MAIN. All results combined and saved to {output_file}")
-    #elif len(all_processed_features) == 1:
-    #    logging.debug(f"MAIN.Processing complete. Results saved to batch_{len(all_processed_features)}_{output_file}")
-    #else:
-    #    logging.debug("MAIN.No files were processed.")
-
     logging.debug("MAIN. Program ending. Attempting to close matplotlib resources.")
     plt.close('all')  # Close all matplotlib figures
     logging.debug("MAIN. Matplotlib figures closed. Program should terminate now.")
-
     logging.debug("MAIN.Program complete.")
 
 
