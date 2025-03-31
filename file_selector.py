@@ -414,9 +414,24 @@ class FileSelector:
         """Update the available files list based on the current directory."""
         self.listbox.delete(0, tk.END)
         try:
-            for file in os.listdir(self.current_dir.get()):
-                if file.endswith(".ndax"):
-                    self.listbox.insert(tk.END, file)
+            # Get all .ndax files
+            ndax_files = [file for file in os.listdir(self.current_dir.get()) if file.endswith(".ndax")]
+
+            # Sort files by extracting the numeric part from filenames
+            # This regex finds sequences of digits in the filename
+            import re
+            def extract_number(filename):
+                # Extract all numbers from the filename
+                numbers = re.findall(r'\d+', filename)
+                # Return the first number found (as an integer) or 0 if none found
+                return int(numbers[0]) if numbers else 0
+
+            # Sort files numerically in descending order (high to low)
+            ndax_files.sort(key=extract_number, reverse=True)
+
+            # Add sorted files to the listbox
+            for file in ndax_files:
+                self.listbox.insert(tk.END, file)
         except Exception as e:
             messagebox.showerror("Error", f"Could not list directory: {str(e)}")
 
