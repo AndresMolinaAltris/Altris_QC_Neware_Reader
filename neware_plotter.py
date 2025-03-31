@@ -287,9 +287,7 @@ class NewarePlotter:
                     # Plot discharge data if available
                     if 'discharge' in cycle_dqdv and cycle_dqdv['discharge'] is not None:
                         discharge_data = cycle_dqdv['discharge']
-                        # For discharge, we often invert the sign for better visualization
-                        discharge_dqdv = -discharge_data['smoothed_dqdv'] if discharge_data['smoothed_dqdv'][0] < 0 else \
-                        discharge_data['smoothed_dqdv']
+                        discharge_dqdv = -abs(discharge_data['smoothed_dqdv'])
                         ax.plot(discharge_data['voltage'], discharge_dqdv,
                                 linestyle=self.line_styles[1], color=color,
                                 label=f"{legend_name} (Discharge)")
@@ -303,6 +301,7 @@ class NewarePlotter:
                 ax.set_title(f"Cycle {cycle}")
                 ax.grid(True)
                 ax.set_xlim(2.75, 3.75)
+                ax.set_ylim(bottom=-max(abs(discharge_dqdv)) * 1.1, top=max(charge_data['smoothed_dqdv']) * 1.1)
 
         # Create a legend axis spanning the bottom row
         legend_ax = fig.add_subplot(gs[1, :])
