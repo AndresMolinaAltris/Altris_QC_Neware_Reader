@@ -177,8 +177,8 @@ class Features:
             discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
 
             # Get dQ/dV data for charge and discharge
-            charge_dqdv = self._calculate_dqdv(charge_data, 'charge', mass)
-            discharge_dqdv = self._calculate_dqdv(discharge_data, 'discharge', mass)
+            charge_dqdv = self._calculate_dqdv(charge_data, 'charge', mass, pre_smooth=True)
+            discharge_dqdv = self._calculate_dqdv(discharge_data, 'discharge', mass, pre_smooth=True)
 
             return {
                 'charge': charge_dqdv,
@@ -189,7 +189,8 @@ class Features:
             logging.debug(f"Error calculating dQ/dV: {e}")
             return None
 
-    def _calculate_dqdv(self, data, direction, mass=1.0, smoothing_method='sma', window_length=15, weights=None):
+    def _calculate_dqdv(self, data, direction, mass=1.0, smoothing_method='sma', window_length=15, weights=None,
+                        pre_smooth=True):
 
         """
         Helper method to calculate dQ/dV for either charge or discharge data.
@@ -217,9 +218,32 @@ class Features:
         data = data.drop_duplicates(subset=['Voltage'])
         data = data.reset_index(drop=True)
 
-        # Calculate dV and dQ
+        # Get voltage and capacity data
         voltage = data['Voltage'].values
         capacity = data[capacity_col].values
+
+        # Here we will add a pre-smoothing step
+        # Apply pre-smoothing to capacity data before differentiation if enabled
+        if pre_smooth:
+            # Use a smaller window for pre-smoothing to preserve peak shapes
+            pre_smooth_window = min(window_length, max(5, len(capacity) // 10))
+
+            if smoothing_method == 'savgol':
+                # Make sure window length is odd for Savitzky-Golay
+                if pre_smooth_window % 2 == 0:
+                    pre_smooth_window += 1
+
+                # Use a lower polynomial order (2) for capacity smoothing
+                capacity = self._apply_savgol_filter(capacity, pre_smooth_window, 2)
+            else:
+                # Use SMA for pre-smoothing as a safe default
+                capacity = self._apply_moving_average(
+                    capacity,
+                    window_length=pre_smooth_window,
+                    method='sma'
+                )
+
+            logging.debug(f"Applied pre-smoothing to capacity data with window size {pre_smooth_window}")
 
         # Calculate differences
         dv = np.diff(voltage)
