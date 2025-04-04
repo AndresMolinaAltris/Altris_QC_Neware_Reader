@@ -395,3 +395,87 @@ class Features:
             # If filtering fails, return original data
             print(f"Moving average smoothing failed: {e}")
             return data
+
+    def extract_plateaus(self, df, cycle, mass=1.0):
+        """
+        Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
+
+        First plateau is defined as: Capacity from initial voltage to 3.2V
+        Second plateau is defined as: Capacity from 3.2V to final voltage
+
+        Args:
+            df: pandas DataFrame containing experimental data
+            cycle: Integer representing the cycle number to extract data from
+            mass: Float representing the mass of active material (default: 1.0 g)
+
+        Returns:
+            Dictionary containing plateau capacities for both charge and discharge
+        """
+        try:
+            # Define plateau transition voltage
+            transition_voltage = 3.2  # V
+
+            # Filter data for the specified cycle
+            cycle_df = df[df["Cycle"] == int(cycle)].copy()
+
+            # Initialize result dictionary
+            result = {}
+
+            # Process charge data
+            charge_data = cycle_df[cycle_df["Status"] == "CC_Chg"].copy()
+            if not charge_data.empty:
+                # Sort by voltage to ensure proper calculation
+                charge_data = charge_data.sort_values('Voltage', ascending=True)
+
+                # Get initial and final capacity values
+                initial_capacity = charge_data["Charge_Capacity(mAh)"].iloc[0]
+                final_capacity = charge_data["Charge_Capacity(mAh)"].iloc[-1]
+
+                # Find the nearest point to transition voltage
+                transition_idx = (charge_data['Voltage'] - transition_voltage).abs().idxmin()
+                transition_capacity = charge_data.loc[transition_idx, "Charge_Capacity(mAh)"]
+
+                # Calculate plateau capacities
+                first_plateau = (transition_capacity - initial_capacity) / mass
+                second_plateau = (final_capacity - transition_capacity) / mass
+
+                # Add to results
+                result["Charge 1st Plateau (mAh/g)"] = round(first_plateau, 4)
+                result["Charge 2nd Plateau (mAh/g)"] = round(second_plateau, 4)
+                result["Charge Total (mAh/g)"] = round((final_capacity - initial_capacity) / mass, 4)
+
+            # Process discharge data
+            discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
+            if not discharge_data.empty:
+                # Sort by voltage to ensure proper calculation
+                discharge_data = discharge_data.sort_values('Voltage', ascending=False)
+
+                # Get initial and final capacity values
+                initial_capacity = discharge_data["Discharge_Capacity(mAh)"].iloc[0]
+                final_capacity = discharge_data["Discharge_Capacity(mAh)"].iloc[-1]
+
+                # Find the nearest point to transition voltage
+                transition_idx = (discharge_data['Voltage'] - transition_voltage).abs().idxmin()
+                transition_capacity = discharge_data.loc[transition_idx, "Discharge_Capacity(mAh)"]
+
+                # Calculate plateau capacities
+                first_plateau = (transition_capacity - initial_capacity) / mass
+                second_plateau = (final_capacity - transition_capacity) / mass
+
+                # Add to results
+                result["Discharge 1st Plateau (mAh/g)"] = round(first_plateau, 4)
+                result["Discharge 2nd Plateau (mAh/g)"] = round(second_plateau, 4)
+                result["Discharge Total (mAh/g)"] = round((final_capacity - initial_capacity) / mass, 4)
+
+            return result
+
+        except Exception as e:
+            logging.debug(f"Error calculating plateau capacities: {e}")
+            return {
+                "Charge 1st Plateau (mAh/g)": np.nan,
+                "Charge 2nd Plateau (mAh/g)": np.nan,
+                "Charge Total (mAh/g)": np.nan,
+                "Discharge 1st Plateau (mAh/g)": np.nan,
+                "Discharge 2nd Plateau (mAh/g)": np.nan,
+                "Discharge Total (mAh/g)": np.nan
+            }

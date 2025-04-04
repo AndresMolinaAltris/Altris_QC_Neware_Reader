@@ -120,9 +120,9 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
 
                 # If we have a GUI and dQ/dV plot, update the dQ/dV tab
                 if gui_callback and dqdv_fig and hasattr(gui_callback.__self__, 'update_dqdv_plot'):
-                    # Extract peak statistics
-                    dqdv_stats = extract_dqdv_stats(dqdv_data)
-                    gui_callback.__self__.update_dqdv_plot(dqdv_fig, dqdv_stats)
+                    # Extract plateau statistics instead of peak statistics
+                    plateau_stats = extract_plateau_stats(ndax_data_cache, db)
+                    gui_callback.__self__.update_dqdv_plot(dqdv_fig, plateau_stats)
 
                 logging.debug("MAIN.Plotting complete.")
 
@@ -136,66 +136,42 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
         return pd.DataFrame()
 
 
-def extract_dqdv_stats(dqdv_data):
+def extract_plateau_stats(ndax_data_cache, db):
     """
-    Extract key statistics from dQ/dV data for display in the UI.
+    Extract plateau capacity statistics from the processed data for display in the UI.
 
     Args:
-        dqdv_data: Dictionary containing dQ/dV data for files and cycles
+        ndax_data_cache: Dictionary containing processed NDAX data
+        db: CellDatabase instance for mass lookup
 
     Returns:
-        List of dictionaries with peak statistics
+        List of dictionaries with plateau capacity statistics
     """
-
     stats = []
 
-    for file_name, cycles in dqdv_data.items():
-        for cycle, cycle_data in cycles.items():
-            # Process charge data
-            if 'charge' in cycle_data and cycle_data['charge'] is not None:
-                charge = cycle_data['charge']
-                voltage = charge['voltage']
-                dqdv = charge['smoothed_dqdv']
+    # Create a Features object for plateau extraction
+    features_obj = Features("plateau_extractor")
 
-                if len(dqdv) > 5:  # Need enough points to find peaks
-                    try:
-                        # Find peaks in the charge data
-                        peaks, _ = find_peaks(dqdv, height=0.1 * np.max(dqdv), distance=5)
+    for file_name, df in ndax_data_cache.items():
+        # Get cell ID and mass for specific capacity calculations
+        cell_ID = extract_cell_id(file_name)
+        mass = db.get_mass(cell_ID) or 1.0
 
-                        # Add statistics for the most prominent peaks
-                        for i, peak_idx in enumerate(peaks[:3]):  # Up to 3 peaks
-                            stats.append({
-                                'File': file_name,
-                                'Cycle': cycle,
-                                'Peak Type': f'Charge Peak {i + 1}',
-                                'Voltage': voltage[peak_idx],
-                                'Height': dqdv[peak_idx]
-                            })
-                    except Exception:
-                        pass
+        # Extract plateaus for each cycle
+        for cycle in range(1, 4):  # Cycles 1, 2, 3
+            try:
+                # Extract plateau capacities
+                plateau_data = features_obj.extract_plateaus(df, cycle, mass)
 
-            # Process discharge data
-            if 'discharge' in cycle_data and cycle_data['discharge'] is not None:
-                discharge = cycle_data['discharge']
-                voltage = discharge['voltage']
-                dqdv = discharge['smoothed_dqdv']
+                if plateau_data:
+                    # Add file and cycle information
+                    plateau_data["File"] = file_name
+                    plateau_data["Cycle"] = cycle
 
-                if len(dqdv) > 5:  # Need enough points to find peaks
-                    try:
-                        # Find peaks in the absolute discharge data
-                        peaks, _ = find_peaks(np.abs(dqdv), height=0.1 * np.max(np.abs(dqdv)), distance=5)
-
-                        # Add statistics for the most prominent peaks
-                        for i, peak_idx in enumerate(peaks[:3]):  # Up to 3 peaks
-                            stats.append({
-                                'File': file_name,
-                                'Cycle': cycle,
-                                'Peak Type': f'Discharge Peak {i + 1}',
-                                'Voltage': voltage[peak_idx],
-                                'Height': dqdv[peak_idx]
-                            })
-                    except Exception:
-                        pass
+                    # Add to statistics
+                    stats.append(plateau_data)
+            except Exception as e:
+                logging.debug(f"Error extracting plateau data for {file_name}, cycle {cycle}: {e}")
 
     return stats
 

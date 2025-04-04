@@ -373,8 +373,9 @@ class FileSelector:
 
         # Add explanatory text
         ttk.Label(stats_frame,
-                  text="This section will display peak statistics for the dQ/dV curves "
-                       "including peak positions, heights, and areas.",
+                  text="This section displays capacity contributions from voltage plateaus.\n"
+                       "1st Plateau: Capacity from initial voltage to 3.2V\n"
+                       "2nd Plateau: Capacity from 3.2V to final voltage",
                   justify=tk.CENTER).pack(pady=10)
 
         # Create a frame for the statistics table
@@ -382,14 +383,30 @@ class FileSelector:
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         # Create columns for the table
-        columns = ["File", "Cycle", "Peak Type", "Voltage (V)", "Height (mAh/g·V)"]
+        columns = [
+            "File", "Cycle",
+            "Charge 1st Plateau (mAh/g)", "Charge 2nd Plateau (mAh/g)", "Charge Total (mAh/g)",
+            "Discharge 1st Plateau (mAh/g)", "Discharge 2nd Plateau (mAh/g)", "Discharge Total (mAh/g)"
+        ]
 
         # Create the table
         self.dqdv_stats_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=5)
 
-        # Configure column headings
+        # Configure column headings with shorter text for better display
+        heading_map = {
+            "File": "File",
+            "Cycle": "Cycle",
+            "Charge 1st Plateau (mAh/g)": "Chg 1st (mAh/g)",
+            "Charge 2nd Plateau (mAh/g)": "Chg 2nd (mAh/g)",
+            "Charge Total (mAh/g)": "Chg Total (mAh/g)",
+            "Discharge 1st Plateau (mAh/g)": "Dchg 1st (mAh/g)",
+            "Discharge 2nd Plateau (mAh/g)": "Dchg 2nd (mAh/g)",
+            "Discharge Total (mAh/g)": "Dchg Total (mAh/g)"
+        }
+
+        # Configure column headings and widths
         for col in columns:
-            self.dqdv_stats_table.heading(col, text=col)
+            self.dqdv_stats_table.heading(col, text=heading_map[col])
             self.dqdv_stats_table.column(col, width=100, anchor="center")
 
         # Add scrollbars
@@ -827,12 +844,19 @@ class FileSelector:
             for item in self.dqdv_stats_table.get_children():
                 self.dqdv_stats_table.delete(item)
 
-            # Add new statistics
+            # Add new plateau statistics
             for stat in dqdv_stats:
-                self.dqdv_stats_table.insert('', 'end', values=[
+                # Format values with one decimal place
+                formatted_values = [
                     stat.get('File', ''),
                     stat.get('Cycle', ''),
-                    stat.get('Peak Type', ''),
-                    f"{stat.get('Voltage', 0):.3f}",
-                    f"{stat.get('Height', 0):.3f}"
-                ])
+                    f"{stat.get('Charge 1st Plateau (mAh/g)', 0):.1f}",
+                    f"{stat.get('Charge 2nd Plateau (mAh/g)', 0):.1f}",
+                    f"{stat.get('Charge Total (mAh/g)', 0):.1f}",
+                    f"{stat.get('Discharge 1st Plateau (mAh/g)', 0):.1f}",
+                    f"{stat.get('Discharge 2nd Plateau (mAh/g)', 0):.1f}",
+                    f"{stat.get('Discharge Total (mAh/g)', 0):.1f}"
+                ]
+
+                # Insert into table
+                self.dqdv_stats_table.insert('', 'end', values=formatted_values)
