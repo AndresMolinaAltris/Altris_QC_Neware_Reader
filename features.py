@@ -396,24 +396,60 @@ class Features:
             print(f"Moving average smoothing failed: {e}")
             return data
 
-    def extract_plateaus(self, df, cycle, mass=1.0):
+    def extract_plateaus(self, df, cycle, mass=1.0, transition_voltage=None):
         """
         Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
 
-        First plateau is defined as: Capacity from initial voltage to 3.2V
-        Second plateau is defined as: Capacity from 3.2V to final voltage
+        First plateau is defined as: Capacity from initial voltage to transition voltage
+        Second plateau is defined as: Capacity from transition voltage to final voltage
 
         Args:
             df: pandas DataFrame containing experimental data
             cycle: Integer representing the cycle number to extract data from
             mass: Float representing the mass of active material (default: 1.0 g)
+            transition_voltage: Optional float to specify the transition voltage
+                If None, will either calculate it or use the default value of 3.2V
 
         Returns:
             Dictionary containing plateau capacities for both charge and discharge
         """
         try:
-            # Define plateau transition voltage
-            transition_voltage = 3.2  # V
+            # Define default transition voltage
+            default_transition_voltage = 3.2  # V
+
+            # If transition_voltage is not provided, try to calculate it
+            if transition_voltage is None:
+                # Try to calculate the transition voltage
+                transition_result = self.find_transition_voltage(df, cycle)
+
+                if transition_result:
+                    # For charge, use the charge transition voltage if available
+                    charge_transition = transition_result.get('charge_transition_voltage')
+                    discharge_transition = transition_result.get('discharge_transition_voltage')
+
+                    # Log which values we're using
+                    if charge_transition:
+                        logging.debug(f"Using calculated charge transition voltage: {charge_transition:.4f}V")
+                    else:
+                        logging.debug(
+                            f"No calculated charge transition voltage, using default: {default_transition_voltage}V")
+
+                    if discharge_transition:
+                        logging.debug(f"Using calculated discharge transition voltage: {discharge_transition:.4f}V")
+                    else:
+                        logging.debug(
+                            f"No calculated discharge transition voltage, using default: {default_transition_voltage}V")
+                else:
+                    # If calculation failed, use default
+                    charge_transition = default_transition_voltage
+                    discharge_transition = default_transition_voltage
+                    logging.debug(
+                        f"Failed to calculate transition voltages, using default: {default_transition_voltage}V")
+            else:
+                # Use the provided transition voltage for both charge and discharge
+                charge_transition = transition_voltage
+                discharge_transition = transition_voltage
+                logging.debug(f"Using provided transition voltage: {transition_voltage:.4f}V")
 
             # Filter data for the specified cycle
             cycle_df = df[df["Cycle"] == int(cycle)].copy()
@@ -432,7 +468,7 @@ class Features:
                 final_capacity = charge_data["Charge_Capacity(mAh)"].iloc[-1]
 
                 # Find the nearest point to transition voltage
-                transition_idx = (charge_data['Voltage'] - transition_voltage).abs().idxmin()
+                transition_idx = (charge_data['Voltage'] - charge_transition).abs().idxmin()
                 transition_capacity = charge_data.loc[transition_idx, "Charge_Capacity(mAh)"]
 
                 # Calculate plateau capacities
@@ -443,6 +479,7 @@ class Features:
                 result["Charge 1st Plateau (mAh/g)"] = round(first_plateau, 4)
                 result["Charge 2nd Plateau (mAh/g)"] = round(second_plateau, 4)
                 result["Charge Total (mAh/g)"] = round((final_capacity - initial_capacity) / mass, 4)
+                result["Charge Transition Voltage (V)"] = round(charge_transition, 4)
 
             # Process discharge data
             discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
@@ -455,7 +492,7 @@ class Features:
                 final_capacity = discharge_data["Discharge_Capacity(mAh)"].iloc[-1]
 
                 # Find the nearest point to transition voltage
-                transition_idx = (discharge_data['Voltage'] - transition_voltage).abs().idxmin()
+                transition_idx = (discharge_data['Voltage'] - discharge_transition).abs().idxmin()
                 transition_capacity = discharge_data.loc[transition_idx, "Discharge_Capacity(mAh)"]
 
                 # Calculate plateau capacities
@@ -466,6 +503,7 @@ class Features:
                 result["Discharge 1st Plateau (mAh/g)"] = round(first_plateau, 4)
                 result["Discharge 2nd Plateau (mAh/g)"] = round(second_plateau, 4)
                 result["Discharge Total (mAh/g)"] = round((final_capacity - initial_capacity) / mass, 4)
+                result["Discharge Transition Voltage (V)"] = round(discharge_transition, 4)
 
             return result
 
@@ -479,3 +517,49 @@ class Features:
                 "Discharge 2nd Plateau (mAh/g)": np.nan,
                 "Discharge Total (mAh/g)": np.nan
             }
+
+    def find_transition_voltage(self, df, cycle, voltage_range=(3.15, 3.3)):
+        """
+        Find transition voltage where dQ/dV is flattest (closest to zero).
+
+        Args:
+            df: DataFrame with battery data
+            cycle: Cycle number to analyze
+            voltage_range: Tuple with min and max voltage for analysis range
+
+        Returns:
+            Dictionary with charge and discharge transition voltages
+        """
+
+        # Get already processed dQ/dV data
+        dqdv_data = self.extract_dqdv(df, cycle)
+        if not dqdv_data:
+            return None
+
+        result = {}
+
+        # Process charge data
+        if 'charge' in dqdv_data and dqdv_data['charge']:
+            charge_data = dqdv_data['charge']
+            # Filter to voltage range
+            mask = (charge_data['voltage'] >= voltage_range[0]) & (charge_data['voltage'] <= voltage_range[1])
+            if np.any(mask):
+                filtered_voltage = charge_data['voltage'][mask]
+                filtered_dqdv = charge_data['smoothed_dqdv'][mask]
+                # Find where absolute value of dQ/dV is minimum (flattest point)
+                flattest_idx = np.argmin(np.abs(filtered_dqdv))
+                result['charge_transition_voltage'] = float(filtered_voltage[flattest_idx])
+
+        # Process discharge data
+        if 'discharge' in dqdv_data and dqdv_data['discharge']:
+            discharge_data = dqdv_data['discharge']
+            # Filter to voltage range
+            mask = (discharge_data['voltage'] >= voltage_range[0]) & (discharge_data['voltage'] <= voltage_range[1])
+            if np.any(mask):
+                filtered_voltage = discharge_data['voltage'][mask]
+                filtered_dqdv = discharge_data['smoothed_dqdv'][mask]
+                # Find where absolute value of dQ/dV is minimum (flattest point)
+                flattest_idx = np.argmin(np.abs(filtered_dqdv))
+                result['discharge_transition_voltage'] = float(filtered_voltage[flattest_idx])
+
+        return result
