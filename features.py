@@ -518,7 +518,7 @@ class Features:
                 "Discharge Total (mAh/g)": np.nan
             }
 
-    def find_transition_voltage(self, df, cycle, voltage_range=(3.15, 3.3)):
+    def find_transition_voltage(self, df, cycle, voltage_range=(3.1, 3.3)):
         """
         Find transition voltage where dQ/dV is flattest (closest to zero).
 
