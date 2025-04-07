@@ -2,7 +2,7 @@ from common.imports import (
     tk, filedialog, ttk, messagebox, os, pd,
     logging, FigureCanvasTkAgg, Figure, plt
 )
-from performance_stats import calculate_statistics
+
 
 class FileSelector:
     """A GUI for selecting and processing .ndax files with preview functionality."""
@@ -373,14 +373,13 @@ class FileSelector:
 
         # Add explanatory text
         ttk.Label(stats_frame,
-                  text="This section displays capacity contributions from voltage plateaus.\n"
-                       "1st Plateau: Capacity from initial voltage to 3.2V\n"
-                       "2nd Plateau: Capacity from 3.2V to final voltage",
-                  justify=tk.CENTER).pack(pady=10)
+                  text="This section displays capacity contributions from each voltage plateau. 1st plateau indicates "
+                       "low spin plateau",
+                  justify=tk.CENTER).pack(pady=5)
 
         # Create a frame for the statistics table
         table_frame = ttk.Frame(stats_frame)
-        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Create columns for the table
         columns = [
