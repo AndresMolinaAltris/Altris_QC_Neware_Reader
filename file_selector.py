@@ -371,15 +371,21 @@ class FileSelector:
         stats_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Statistics")
         stats_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
 
+        # Use grid layout for better control in the stats frame
+        stats_frame.columnconfigure(0, weight=1)  # For table area
+        stats_frame.rowconfigure(0, weight=0)  # For explanation
+        stats_frame.rowconfigure(1, weight=1)  # For table
+        stats_frame.rowconfigure(2, weight=0)  # For export button
+
         # Add explanatory text
         ttk.Label(stats_frame,
                   text="This section displays capacity contributions from each voltage plateau. 1st plateau indicates "
                        "low spin plateau",
-                  justify=tk.CENTER).pack(pady=5)
+                  justify=tk.CENTER).grid(row=0, column=0, sticky="ew", pady=5)
 
         # Create a frame for the statistics table
         table_frame = ttk.Frame(stats_frame)
-        table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        table_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
         # Create columns for the table
         columns = [
@@ -415,6 +421,19 @@ class FileSelector:
         # Place the table and scrollbar
         self.dqdv_stats_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Add export button in its own frame at the bottom
+        export_frame = ttk.Frame(stats_frame)
+        export_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=5)
+
+        # Right-align the export button
+        export_frame.columnconfigure(0, weight=1)  # This pushes the button to the right
+
+        ttk.Button(
+            export_frame,
+            text="Export Table",
+            command=lambda: self._export_analysis_table(self.dqdv_stats_table, "dqdv_statistics")
+        ).grid(row=0, column=0, sticky="e", padx=5, pady=5)
 
         return dqdv_tab
 
@@ -693,15 +712,30 @@ class FileSelector:
             self.analysis_table.tag_configure('separator', background='#f0f0f0')
             self.analysis_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
 
-    def _export_analysis_table(self):
-        """Export the analysis table to an Excel file."""
-        if not self.analysis_table.get_children():
+    def _export_analysis_table(self, table=None, file_prefix=None):
+        """
+        Export the specified table to an Excel file.
+
+        Args:
+            table: The ttk.Treeview widget to export. If None, uses self.analysis_table.
+            file_prefix: Optional prefix for the default filename.
+        """
+        # If no table specified, use the analysis table
+        if table is None:
+            table = self.analysis_table
+
+        # Check if the table has data
+        if not table.get_children():
             messagebox.showinfo("Export Table", "No data to export.")
             return
 
-        # Use the default output file path, but allow user to change it
+        # Set up default filename based on the provided prefix or use the default
+        if file_prefix:
+            default_file = f"{file_prefix}.xlsx"
+        else:
+            default_file = os.path.basename(self.default_output_file)
+
         default_dir = os.path.dirname(os.path.abspath(self.default_output_file))
-        default_file = os.path.basename(self.default_output_file)
 
         file_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
@@ -716,10 +750,10 @@ class FileSelector:
         try:
             # Create a DataFrame from the table data
             data = []
-            columns = self.analysis_table["columns"]
+            columns = table["columns"]
 
-            for item_id in self.analysis_table.get_children():
-                item_values = self.analysis_table.item(item_id)["values"]
+            for item_id in table.get_children():
+                item_values = table.item(item_id)["values"]
                 data.append(dict(zip(columns, item_values)))
 
             # Convert to DataFrame and export
