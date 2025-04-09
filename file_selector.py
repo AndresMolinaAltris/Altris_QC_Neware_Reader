@@ -1,5 +1,5 @@
 from common.imports import (
-    tk, filedialog, ttk, messagebox, os, pd,
+    tk, filedialog, ttk, messagebox, os, pd, NewareNDA,
     logging, FigureCanvasTkAgg, Figure, plt
 )
 
@@ -99,6 +99,8 @@ class FileSelector:
 
         ttk.Label(button_frame, textvariable=self.status_var).pack(side=tk.LEFT, padx=5)
 
+        ttk.Button(button_frame, text="Export Raw Data",
+                   command=self._export_raw_data).pack(side=tk.RIGHT, padx=5)
         ttk.Button(button_frame, text="Exit",
                    command=self._exit_application).pack(side=tk.RIGHT, padx=5)
         ttk.Button(button_frame, text="Clear Selection",
@@ -893,3 +895,100 @@ class FileSelector:
 
                 # Insert into table
                 self.dqdv_stats_table.insert('', 'end', values=formatted_values)
+
+    def _export_raw_data(self):
+        """
+        Export raw data from selected NDAX files directly to Excel.
+        Allows user to choose the export directory.
+        Uses NewareNDA.read() to read files and exports with the same base name.
+        Handles multiple file exports.
+        """
+        if not self.selected_files:
+            messagebox.showwarning(
+                "No Selection",
+                "No files are currently selected. Please select files before exporting."
+            )
+            return
+
+        # Ask user to select an export directory
+        export_dir = filedialog.askdirectory(
+            title="Select Export Directory",
+            initialdir=os.path.dirname(self.selected_files[0])
+        )
+
+        # If user cancels directory selection, abort export
+        if not export_dir:
+            return
+
+        # Create a progress bar for user feedback
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("Exporting Raw Data")
+        progress_window.geometry("400x100")
+        progress_window.transient(self.root)  # Set as transient to main window
+        progress_window.grab_set()  # Make modal
+
+        # Configure progress window grid
+        progress_window.columnconfigure(0, weight=1)
+        progress_window.rowconfigure(0, weight=0)
+        progress_window.rowconfigure(1, weight=0)
+
+        # Add status label
+        status_label = ttk.Label(progress_window, text="Preparing to export files...")
+        status_label.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
+
+        # Add progress bar
+        progress_bar = ttk.Progressbar(progress_window, mode="determinate", length=380)
+        progress_bar.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
+
+        # Create a copy of selected files
+        files_to_export = self.selected_files.copy()
+        total_files = len(files_to_export)
+        files_exported = 0
+        failed_files = []
+
+        # Update progress bar max value
+        progress_bar["maximum"] = total_files
+        progress_bar["value"] = 0
+        progress_window.update()
+
+        # Process each file
+        for file_path in files_to_export:
+            try:
+                # Update status message
+                file_name = os.path.basename(file_path)
+                status_label.config(text=f"Exporting {file_name}... ({files_exported + 1}/{total_files})")
+                progress_window.update()
+
+                # Read the NDAX file
+                df = NewareNDA.read(file_path)
+
+                # Generate output file path with same name but .xlsx extension in the chosen directory
+                output_path = os.path.join(export_dir, os.path.splitext(file_name)[0] + ".xlsx")
+
+                # Export to Excel
+                df.to_excel(output_path, index=False)
+
+                # Update progress
+                files_exported += 1
+                progress_bar["value"] = files_exported
+                progress_window.update()
+
+            except Exception as e:
+                logging.debug(f"FILE_SELECTOR. Error exporting raw data for {file_path}: {e}")
+                failed_files.append(file_name)
+
+        # Close progress window
+        progress_window.destroy()
+
+        # Show completion message
+        if failed_files:
+            messagebox.showwarning(
+                "Export Completed With Errors",
+                f"Exported {files_exported} of {total_files} files to {export_dir}.\n\n"
+                f"Failed to export: {', '.join(failed_files)}"
+            )
+        else:
+            messagebox.showinfo(
+                "Export Completed",
+                f"Successfully exported raw data for {files_exported} files to:\n{export_dir}"
+            )
