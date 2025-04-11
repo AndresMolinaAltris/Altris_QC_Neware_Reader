@@ -22,12 +22,35 @@ configure_logging(base_directory)
 logging.debug("MAIN. QC Neware Reader Started")
 
 
-def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
+def process_files(ndax_file_list, db, selected_cycles=None, output_file=None, enable_plotting=True,
                   save_plots_dir=None, gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
+
+    Args:
+        ndax_file_list: List of NDAX files to process
+        db: CellDatabase instance
+        selected_cycles: List of 3 cycle numbers to process and display (default: [1, 2, 3])
+        output_file: Path to save output file (optional)
+        enable_plotting: Whether to generate plots
+        save_plots_dir: Directory to save plots (optional)
+        gui_callback: Callback function for updating GUI
+
+    Returns:
+        DataFrame containing extracted features
     """
     logging.debug("MAIN. process_files started")
+
+    # Use default cycles if none provided
+    if selected_cycles is None or len(selected_cycles) == 0:
+        selected_cycles = [1, 2, 3]
+
+    # Ensure we have exactly 3 cycles (pad or trim as needed)
+    while len(selected_cycles) < 3:
+        selected_cycles.append(selected_cycles[-1] + 1 if selected_cycles else 1)
+    selected_cycles = selected_cycles[:3]  # Limit to first 3 cycles if more provided
+
+    logging.debug(f"MAIN. Using cycles: {selected_cycles}")
 
     # Initialize an empty DataFrame to store extracted features
     all_features = []
@@ -64,9 +87,14 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
         # Initialize dQ/dV data dictionary for this file
         dqdv_data[filename_stem] = {}
 
-        # Process multiple cycles
-        for cycle in range(1, 4):  # Cycles 1, 2, 3
+        # Process each of the selected cycles
+        for cycle in selected_cycles:
             logging.debug(f"MAIN.Extracting features for CYCLE {cycle}")
+
+            # Check if cycle exists in the data
+            if cycle not in df['Cycle'].unique():
+                logging.debug(f"MAIN.Cycle {cycle} not found in file {filename_stem}, skipping")
+                continue
 
             # Extract all features in one call
             feature_df = features_obj.extract(df, cycle, mass)
@@ -101,12 +129,13 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
                 logging.debug("MAIN.Generating capacity plots...")
                 plotter = NewarePlotter(db)
 
-                # Pass the cached data to avoid reading files again
+                # Pass selected cycles to plotter
                 fig = plotter.plot_ndax_files(
                     ndax_file_list,
-                    preprocessed_data=ndax_data_cache,  # Pass the cache here
+                    preprocessed_data=ndax_data_cache,
                     display_plot=False,
-                    gui_callback=gui_callback
+                    gui_callback=gui_callback,
+                    selected_cycles=selected_cycles  # Pass the cycles
                 )
 
                 # Generate dQ/dV plots
@@ -115,14 +144,35 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
                     ndax_file_list,
                     dqdv_data=dqdv_data,
                     display_plot=False,
-                    gui_callback=None  # We'll update manually
+                    gui_callback=None,
+                    selected_cycles=selected_cycles
                 )
 
                 # If we have a GUI and dQ/dV plot, update the dQ/dV tab
-                if gui_callback and dqdv_fig and hasattr(gui_callback.__self__, 'update_dqdv_plot'):
-                    # Extract plateau statistics instead of peak statistics
-                    plateau_stats = extract_plateau_stats(ndax_data_cache, db)
-                    gui_callback.__self__.update_dqdv_plot(dqdv_fig, plateau_stats)
+                if gui_callback:
+                    logging.debug(f"GUI callback exists: {gui_callback}")
+                    if dqdv_fig:
+                        logging.debug(f"dQ/dV figure exists: {dqdv_fig}")
+                        if hasattr(gui_callback.__self__, 'update_dqdv_plot'):
+                            logging.debug("GUI callback has update_dqdv_plot method")
+                            # Extract plateau statistics
+                            plateau_stats = extract_plateau_stats(ndax_data_cache, db, selected_cycles)
+                            logging.debug(f"Extracted {len(plateau_stats)} plateau stats entries")
+                            # Call the update method
+                            try:
+                                logging.debug("Calling update_dqdv_plot method")
+                                gui_callback.__self__.update_dqdv_plot(dqdv_fig, plateau_stats)
+                                logging.debug("update_dqdv_plot method call completed")
+                            except Exception as e:
+                                logging.debug(f"Error in update_dqdv_plot: {e}")
+                                import traceback
+                                logging.debug(traceback.format_exc())
+                        else:
+                            logging.debug("GUI callback does not have update_dqdv_plot method")
+                    else:
+                        logging.debug("No dQ/dV figure generated")
+                else:
+                    logging.debug("No GUI callback provided")
 
                 logging.debug("MAIN.Plotting complete.")
 
@@ -136,17 +186,22 @@ def process_files(ndax_file_list, db, output_file=None, enable_plotting=True,
         return pd.DataFrame()
 
 
-def extract_plateau_stats(ndax_data_cache, db):
+def extract_plateau_stats(ndax_data_cache, db, selected_cycles=None):
     """
     Extract plateau capacity statistics from the processed data for display in the UI.
 
     Args:
         ndax_data_cache: Dictionary containing processed NDAX data
         db: CellDatabase instance for mass lookup
+        selected_cycles: List of cycles to extract plateaus for (default: [1, 2, 3])
 
     Returns:
         List of dictionaries with plateau capacity statistics
     """
+    # Use default cycles if none provided
+    if selected_cycles is None:
+        selected_cycles = [1, 2, 3]
+
     stats = []
 
     # Create a Features object for plateau extraction
@@ -157,8 +212,13 @@ def extract_plateau_stats(ndax_data_cache, db):
         cell_ID = extract_cell_id(file_name)
         mass = db.get_mass(cell_ID) or 1.0
 
-        # Extract plateaus for each cycle
-        for cycle in range(1, 4):  # Cycles 1, 2, 3
+        # Extract plateaus for each selected cycle
+        for cycle in selected_cycles:
+            # Skip if cycle doesn't exist in this file
+            if cycle not in df['Cycle'].unique():
+                logging.debug(f"Cycle {cycle} not found in file {file_name}, skipping plateau extraction")
+                continue
+
             try:
                 # Extract plateau capacities
                 plateau_data = features_obj.extract_plateaus(df, cycle, mass)
@@ -174,7 +234,6 @@ def extract_plateau_stats(ndax_data_cache, db):
                 logging.debug(f"Error extracting plateau data for {file_name}, cycle {cycle}: {e}")
 
     return stats
-
 
 def main():
     """
@@ -221,13 +280,10 @@ def main():
     file_selector_instance = FileSelector(initial_dir=data_path, default_output_file=output_file)
 
     # Define a callback function to process files
+    # In main.py, modify the process_file_callback function:
     def process_file_callback(ndax_file_list):
         """
         Callback function for processing batches of NDAX files.
-
-        Processes a batch of files selected by the user, extracts features,
-        generates plots if enabled, and saves results to Excel. Also combines
-        all processed batches into a single output file.
 
         Args:
             ndax_file_list (list): List of paths to NDAX files to process
@@ -235,7 +291,6 @@ def main():
         Returns:
             pd.DataFrame: The extracted features for the current batch
         """
-
         logging.debug("MAIN.process_file_callback func started")
         nonlocal all_processed_features
 
@@ -252,13 +307,18 @@ def main():
 
         # Process current batch of files
         batch_number = len(all_processed_features) + 1
-        batch_output = None
+        output_file = None  # Changed from batch_output to output_file
+
+        # Get selected cycles from the file selector
+        selected_cycles = file_selector_instance.selected_cycles
+        logging.debug(f"MAIN.Using selected cycles: {selected_cycles}")
 
         # Process files with plotting enabled
         features_df = process_files(
             ndax_file_list,
             db,
-            batch_output,
+            selected_cycles=selected_cycles,  # Pass the selected cycles
+            output_file=output_file,  # Changed parameter name from batch_output to output_file
             enable_plotting=enable_plotting,
             save_plots_dir=plots_dir,
             gui_callback=file_selector_instance.update_plot

@@ -3,6 +3,100 @@ from common.imports import (
     logging, FigureCanvasTkAgg, Figure, plt
 )
 
+from tkinter import simpledialog  # For creating custom dialogs
+
+
+# Add this new class for the cycle selection dialog
+class CycleSelectionDialog(tk.Toplevel):
+    """Dialog for selecting which cycles to display in plots and analysis."""
+
+    def __init__(self, parent, current_cycles):
+        super().__init__(parent)
+        self.title("Set Display Cycles")
+        self.transient(parent)  # Make dialog modal
+        self.grab_set()
+
+        self.result = None
+        self.current_cycles = current_cycles
+
+        # Set up the dialog window
+        self.geometry("300x200")
+        self.resizable(False, False)
+
+        self._create_widgets()
+
+        # Center the dialog
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"+{x}+{y}")
+
+        # Handle window close event
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        # Wait for window to be destroyed
+        self.wait_window(self)
+
+    def _create_widgets(self):
+        """Create the widgets for the dialog."""
+        # Main frame
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Label
+        ttk.Label(main_frame, text="Select 3 cycles to display:").pack(pady=(0, 10))
+
+        # Create frame for cycle selection
+        cycle_frame = ttk.Frame(main_frame)
+        cycle_frame.pack(fill=tk.X, pady=5)
+
+        # Add cycle selection dropdowns
+        self.cycle_vars = []
+        labels = ["First plot:", "Second plot:", "Third plot:"]
+
+        for i, label in enumerate(labels):
+            row_frame = ttk.Frame(cycle_frame)
+            row_frame.pack(fill=tk.X, pady=2)
+
+            ttk.Label(row_frame, text=label, width=10).pack(side=tk.LEFT, padx=(0, 5))
+
+            var = tk.IntVar(value=self.current_cycles[i])
+            self.cycle_vars.append(var)
+
+            # Dropdown with values 1-10
+            dropdown = ttk.Combobox(row_frame, textvariable=var, width=5)
+            dropdown['values'] = list(range(1, 11))  # Cycles 1-10
+            dropdown.pack(side=tk.LEFT)
+
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+
+        # Reset button
+        ttk.Button(button_frame, text="Reset to Default",
+                   command=self._reset_defaults).pack(side=tk.LEFT, padx=(0, 5))
+
+        # OK and Cancel buttons
+        ttk.Button(button_frame, text="OK", command=self._ok).pack(side=tk.RIGHT)
+        ttk.Button(button_frame, text="Cancel", command=self._cancel).pack(side=tk.RIGHT, padx=5)
+
+    def _reset_defaults(self):
+        """Reset to default cycles (1, 2, 3)."""
+        for i, var in enumerate(self.cycle_vars):
+            var.set(i + 1)
+
+    def _ok(self):
+        """Process the selection and close the dialog."""
+        self.result = [var.get() for var in self.cycle_vars]
+        self.destroy()
+
+    def _cancel(self):
+        """Cancel the selection and close the dialog."""
+        self.result = None
+        self.destroy()
+
 
 class FileSelector:
     """A GUI for selecting and processing .ndax files with preview functionality."""
@@ -19,6 +113,22 @@ class FileSelector:
         self.current_dir = None
         self.fig = None
         self.canvas = None
+        self.selected_cycles = [1, 2, 3]  # Default cycles to display
+
+    def _open_cycle_selection(self):
+        """Open dialog to select which cycles to display."""
+        dialog = CycleSelectionDialog(self.root, self.selected_cycles)
+
+        if dialog.result:  # If user clicked OK
+            self.selected_cycles = dialog.result
+
+            # Update status to show selected cycles
+            cycle_text = ", ".join(str(c) for c in self.selected_cycles)
+            self.status_var.set(f"Selected cycles: {cycle_text}")
+
+            # If files are already selected, reprocess to update the plots
+            if self.selected_files:
+                self._process_files(self._last_callback)
 
     def show_interface(self, process_callback=None):
         """
@@ -37,6 +147,7 @@ class FileSelector:
         self.selected_files = []
         self.current_dir = tk.StringVar(value=self.initial_dir)
         self.status_var = tk.StringVar(value="No files selected")
+        self._last_callback = None  # Store the callback for later reprocessing
 
         # Configure grid layout
         self.root.columnconfigure(0, weight=1)
@@ -109,6 +220,9 @@ class FileSelector:
         logging.debug("FILE_SELECTOR. Calling process_files func in main")
         ttk.Button(button_frame, text="Process Files",
                    command=lambda: self._process_files(process_callback)).pack(side=tk.RIGHT, padx=5)
+
+        ttk.Button(button_frame, text="Set Cycles...",
+                   command=self._open_cycle_selection).pack(side=tk.RIGHT, padx=5)
 
         # Initialize file list and start status updates
         self._update_file_list()
@@ -497,6 +611,7 @@ class FileSelector:
                 self.selected_files.remove(full_path)
             self.selected_listbox.delete(i)
 
+    # In file_selector.py, modify the _process_files method:
     def _process_files(self, callback):
         """Process the selected files using the provided callback function."""
         logging.debug("FILE_SELECTOR._process_files func started")
@@ -506,6 +621,9 @@ class FileSelector:
                 "No files are currently selected. Please select files before processing."
             )
             return
+
+        # Store callback for later use
+        self._last_callback = callback
 
         # If we have a callback function, call it with the selected files
         if callback:
@@ -517,7 +635,8 @@ class FileSelector:
             self.status_var.set(f"Processing {len(files_to_process)} files...")
             self.root.update()
 
-            # Call the callback function with the list of files
+            # Call the callback function with just the list of files
+            # The callback function will access self.selected_cycles directly
             features_df = callback(files_to_process)
 
             # Update the analysis table with the new data
@@ -525,7 +644,8 @@ class FileSelector:
                 self._update_analysis_table(features_df)
 
             # Update status to show completion
-            self.status_var.set(f"Processed {len(files_to_process)} files. Ready for next batch.")
+            cycle_text = ", ".join(str(c) for c in self.selected_cycles)
+            self.status_var.set(f"Processed {len(files_to_process)} files. Cycles: {cycle_text}")
             logging.debug("FILE_SELECTOR._process_files callback finished")
 
         else:
@@ -819,14 +939,16 @@ class FileSelector:
             fig: The matplotlib figure containing dQ/dV plots
             dqdv_stats: Optional list of dictionaries with peak statistics
         """
+        logging.debug("FILE_SELECTOR.update_dqdv_plot started")
+
         # Check if root window still exists
         if not hasattr(self, 'root') or not self.root.winfo_exists():
-            print("Warning: Attempted to update dQ/dV plot after window was closed")
+            logging.debug("Warning: Attempted to update dQ/dV plot after window was closed")
             return
 
         # Check if we have the dqdv_tab attribute
         if not hasattr(self, 'dqdv_tab') or not self.dqdv_tab.winfo_exists():
-            print("Warning: dQ/dV tab no longer exists")
+            logging.debug("Warning: dQ/dV tab no longer exists")
             return
 
         # Find the plot frame in the dQ/dV tab
@@ -837,18 +959,29 @@ class FileSelector:
                 break
 
         if not plot_frame:
-            print("Warning: dQ/dV plot frame not found")
+            logging.debug("Warning: dQ/dV plot frame not found")
             return
 
+        # Log the figure object details
+        logging.debug(f"dQ/dV Figure object: {fig}")
+        logging.debug(f"dQ/dV Figure size: {fig.get_size_inches()}")
+        if hasattr(fig, 'axes') and fig.axes:
+            logging.debug(f"Number of axes in figure: {len(fig.axes)}")
+            for i, ax in enumerate(fig.axes):
+                logging.debug(f"Axis {i} has {len(ax.lines)} lines")
+
         # Completely clear the plot frame
+        logging.debug("Clearing existing dQ/dV plot frame widgets")
         for widget in list(plot_frame.winfo_children()):
             try:
                 widget.destroy()
             except tk.TclError:
                 # Widget might already be destroyed, just continue
+                logging.debug("Widget already destroyed during cleanup")
                 pass
 
         # Store the new figure
+        logging.debug("Storing the new dQ/dV figure")
         self.dqdv_fig = fig
 
         # Create a fixed-height button container at the bottom
@@ -866,19 +999,30 @@ class FileSelector:
         plot_container.pack(fill=tk.BOTH, expand=True)
 
         # Create a new canvas with the figure
-        self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
+        logging.debug("Creating new FigureCanvasTkAgg for dQ/dV figure")
+        try:
+            self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
 
-        # Make sure the figure fits properly in the available space
-        self.dqdv_fig.tight_layout()
+            # Make sure the figure fits properly in the available space
+            self.dqdv_fig.tight_layout()
 
-        # Draw the canvas
-        self.dqdv_canvas.draw()
+            # Draw the canvas
+            logging.debug("Drawing the dQ/dV canvas")
+            self.dqdv_canvas.draw()
 
-        # Pack the canvas to fill the available space
-        self.dqdv_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            # Pack the canvas to fill the available space
+            logging.debug("Packing the dQ/dV canvas into the container")
+            self.dqdv_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            logging.debug("dQ/dV canvas successfully created and packed")
+        except Exception as e:
+            logging.debug(f"Error creating or drawing dQ/dV canvas: {e}")
+            import traceback
+            logging.debug(traceback.format_exc())
 
         # Update statistics table if provided
         if dqdv_stats and hasattr(self, 'dqdv_stats_table'):
+            logging.debug(f"Updating dQ/dV stats table with {len(dqdv_stats)} entries")
             # Clear existing items
             for item in self.dqdv_stats_table.get_children():
                 self.dqdv_stats_table.delete(item)
@@ -913,6 +1057,13 @@ class FileSelector:
 
                 # Insert into table
                 self.dqdv_stats_table.insert('', 'end', values=formatted_values)
+
+            logging.debug("dQ/dV stats table updated successfully")
+        else:
+            logging.debug(
+                f"Skipping dQ/dV stats table update: have stats: {bool(dqdv_stats)}, have table: {hasattr(self, 'dqdv_stats_table')}")
+
+        logging.debug("FILE_SELECTOR.update_dqdv_plot completed")
 
     def _export_raw_data(self):
         """
