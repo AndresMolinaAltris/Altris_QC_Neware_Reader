@@ -414,7 +414,11 @@ class FileSelector:
         # Configure column headings and widths
         for col in columns:
             self.dqdv_stats_table.heading(col, text=heading_map[col])
-            self.dqdv_stats_table.column(col, width=100, anchor="center")
+            # Make plateau columns wider to accommodate percentages
+            if "Plateau" in col:
+                self.dqdv_stats_table.column(col, width=130, anchor="center")
+            else:
+                self.dqdv_stats_table.column(col, width=100, anchor="center")
 
         # Add scrollbars
         y_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.dqdv_stats_table.yview)
@@ -881,16 +885,30 @@ class FileSelector:
 
             # Add new plateau statistics
             for stat in dqdv_stats:
-                # Format values with one decimal place
+                # Get capacity values
+                charge_1st = stat.get('Charge 1st Plateau (mAh/g)', 0)
+                charge_2nd = stat.get('Charge 2nd Plateau (mAh/g)', 0)
+                charge_total = stat.get('Charge Total (mAh/g)', 0)
+                discharge_1st = stat.get('Discharge 1st Plateau (mAh/g)', 0)
+                discharge_2nd = stat.get('Discharge 2nd Plateau (mAh/g)', 0)
+                discharge_total = stat.get('Discharge Total (mAh/g)', 0)
+
+                # Calculate percentages (handle division by zero)
+                charge_1st_pct = (charge_1st / charge_total * 100) if charge_total != 0 else 0
+                charge_2nd_pct = (charge_2nd / charge_total * 100) if charge_total != 0 else 0
+                discharge_1st_pct = (discharge_1st / discharge_total * 100) if discharge_total != 0 else 0
+                discharge_2nd_pct = (discharge_2nd / discharge_total * 100) if discharge_total != 0 else 0
+
+                # Format values with one decimal place plus percentage in brackets
                 formatted_values = [
                     stat.get('File', ''),
                     stat.get('Cycle', ''),
-                    f"{stat.get('Charge 1st Plateau (mAh/g)', 0):.1f}",
-                    f"{stat.get('Charge 2nd Plateau (mAh/g)', 0):.1f}",
-                    f"{stat.get('Charge Total (mAh/g)', 0):.1f}",
-                    f"{stat.get('Discharge 1st Plateau (mAh/g)', 0):.1f}",
-                    f"{stat.get('Discharge 2nd Plateau (mAh/g)', 0):.1f}",
-                    f"{stat.get('Discharge Total (mAh/g)', 0):.1f}"
+                    f"{charge_1st:.1f} ({charge_1st_pct:.1f}%)",
+                    f"{charge_2nd:.1f} ({charge_2nd_pct:.1f}%)",
+                    f"{charge_total:.1f}",
+                    f"{discharge_1st:.1f} ({discharge_1st_pct:.1f}%)",
+                    f"{discharge_2nd:.1f} ({discharge_2nd_pct:.1f}%)",
+                    f"{discharge_total:.1f}"
                 ]
 
                 # Insert into table
