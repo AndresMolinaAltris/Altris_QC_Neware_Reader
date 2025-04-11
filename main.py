@@ -6,8 +6,6 @@ from common.project_imports import (
     configure_logging
 )
 
-from scipy.signal import find_peaks
-
 sys.path.append(str(Path(__file__).parent))
 
 
