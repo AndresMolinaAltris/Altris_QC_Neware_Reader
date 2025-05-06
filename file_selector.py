@@ -120,11 +120,19 @@ class FileSelector:
         dialog = CycleSelectionDialog(self.root, self.selected_cycles)
 
         if dialog.result:  # If user clicked OK
+            # Store the previous cycles to check if they changed
+            previous_cycles = self.selected_cycles.copy()
+
+            # Update to new cycles
             self.selected_cycles = dialog.result
 
             # Update status to show selected cycles
             cycle_text = ", ".join(str(c) for c in self.selected_cycles)
             self.status_var.set(f"Selected cycles: {cycle_text}")
+
+            # Update table columns if they changed
+            if previous_cycles != self.selected_cycles:
+                self._update_table_columns()
 
             # If files are already selected, reprocess to update the plots
             if self.selected_files:
@@ -363,7 +371,7 @@ class FileSelector:
         if file_path:
             fig.savefig(file_path, dpi=300, bbox_inches='tight')
             messagebox.showinfo("Success", f"Plot saved to {file_path}")
-            
+
     def _create_analysis_table(self):
         """Create a table in the analysis tab to display specific capacity results."""
         # Create a frame to hold the table
@@ -376,65 +384,24 @@ class FileSelector:
         table_frame.rowconfigure(1, weight=1)  # Table row
 
         # Create a header frame for cycle labels
-        header_frame = ttk.Frame(table_frame)
-        header_frame.grid(row=0, column=0, sticky="ew")
+        self.header_frame = ttk.Frame(table_frame)
+        self.header_frame.grid(row=0, column=0, sticky="ew")
 
-        # Create the actual table columns
         # First define the metrics that will repeat for each cycle
-        metrics = ["Specific Charge Capacity (mAh/g)",
-                   "Specific Discharge Capacity (mAh/g)",
-                   "Coulombic Efficiency (%)"]
+        self.metrics = ["Specific Charge Capacity (mAh/g)",
+                        "Specific Discharge Capacity (mAh/g)",
+                        "Coulombic Efficiency (%)"]
 
-        # Then define the complete set of columns
-        columns = ["Cell ID"]
-        for cycle in [1, 2, 3]:  # Matching the SELECTED_CYCLES from neware_plotter.py
-            for metric in metrics:
-                columns.append(f"C{cycle}: {metric}")
+        # Store the table frame for future reference
+        self.table_frame = table_frame
 
-        # Create a Treeview widget with our columns
-        self.analysis_table = ttk.Treeview(table_frame, columns=columns, show="headings")
-
-        # Create the cycle header labels
-        cell_id_label = ttk.Label(header_frame, text="", width=15, anchor="center")
-        cell_id_label.grid(row=0, column=0, padx=1, pady=1)
-
-        col_index = 1
-        for cycle in [1, 2, 3]:
-            # Create a label spanning 3 columns (for the 3 metrics per cycle)
-            cycle_label = ttk.Label(header_frame, text=f"Cycle {cycle}",
-                                    width=len(metrics) * 20, anchor="center",
-                                    background="#e6e6e6", relief="solid", borderwidth=1)
-            cycle_label.grid(row=0, column=col_index, columnspan=len(metrics), padx=1, pady=1, sticky="ew")
-            col_index += len(metrics)
-
-        # Define column headings and widths for the actual table
-        self.analysis_table.heading("Cell ID", text="Cell ID")
-        self.analysis_table.column("Cell ID", width=100, anchor="center")
-
-        # Set up the metric columns for each cycle
-        col_index = 0
-        for cycle in [1, 2, 3]:
-            for metric in metrics:
-                col_name = f"C{cycle}: {metric}"
-                # Use shorter display text for column headers
-                display_text = metric.replace("Specific ", "").replace(" (mAh/g)", "").replace("Coulombic ", "")
-                self.analysis_table.heading(col_name, text=display_text)
-                self.analysis_table.column(col_name, width=120, anchor="center")
-
-        # Add scrollbars
-        y_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.analysis_table.yview)
-        x_scrollbar = ttk.Scrollbar(table_frame, orient="horizontal", command=self.analysis_table.xview)
-        self.analysis_table.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
-
-        # Place the table and scrollbars in the frame
-        self.analysis_table.grid(row=1, column=0, sticky="nsew")
-        y_scrollbar.grid(row=1, column=1, sticky="ns")
-        x_scrollbar.grid(row=2, column=0, sticky="ew")
+        # Create the actual table - we'll populate it with _update_table_columns()
+        self._update_table_columns()
 
         # Add a label explaining the purpose of this tab
         explanation = ttk.Label(
             self.analysis_tab,
-            text="This tab displays capacity data and statistics for cycles 1-3.\n"
+            text="This tab displays capacity data and statistics for the selected cycles.\n"
                  "Process files in the 'Charge vs Voltage Plot' tab to see results.",
             justify=tk.CENTER
         )
@@ -449,6 +416,67 @@ class FileSelector:
             text="Export Table",
             command=self._export_analysis_table
         ).pack(side=tk.RIGHT)
+
+    def _update_table_columns(self):
+        """Update the table columns based on the current selected cycles"""
+        # Clear existing widgets in the header frame
+        for widget in self.header_frame.winfo_children():
+            widget.destroy()
+
+        # Recreate the header based on currently selected cycles
+        cell_id_label = ttk.Label(self.header_frame, text="", width=15, anchor="center")
+        cell_id_label.grid(row=0, column=0, padx=1, pady=1)
+
+        # Define the columns based on selected cycles
+        columns = ["Cell ID"]
+
+        col_index = 1
+        for cycle in self.selected_cycles:
+            # Create a label spanning 3 columns (for the 3 metrics per cycle)
+            cycle_label = ttk.Label(self.header_frame, text=f"Cycle {cycle}",
+                                    width=len(self.metrics) * 20, anchor="center",
+                                    background="#e6e6e6", relief="solid", borderwidth=1)
+            cycle_label.grid(row=0, column=col_index, columnspan=len(self.metrics), padx=1, pady=1, sticky="ew")
+            col_index += len(self.metrics)
+
+            # Add columns for this cycle
+            for metric in self.metrics:
+                columns.append(f"C{cycle}: {metric}")
+
+        # If we already have a table, destroy it
+        if hasattr(self, 'analysis_table'):
+            # Remove old table and scrollbars
+            if hasattr(self, 'y_scrollbar'):
+                self.y_scrollbar.destroy()
+            if hasattr(self, 'x_scrollbar'):
+                self.x_scrollbar.destroy()
+            self.analysis_table.destroy()
+
+        # Create a new table with updated columns
+        self.analysis_table = ttk.Treeview(self.table_frame, columns=columns, show="headings")
+
+        # Define column headings and widths
+        self.analysis_table.heading("Cell ID", text="Cell ID")
+        self.analysis_table.column("Cell ID", width=100, anchor="center")
+
+        # Set up the metric columns for each cycle
+        for cycle in self.selected_cycles:
+            for metric in self.metrics:
+                col_name = f"C{cycle}: {metric}"
+                # Use shorter display text for column headers
+                display_text = metric.replace("Specific ", "").replace(" (mAh/g)", "").replace("Coulombic ", "")
+                self.analysis_table.heading(col_name, text=display_text)
+                self.analysis_table.column(col_name, width=120, anchor="center")
+
+        # Add scrollbars
+        self.y_scrollbar = ttk.Scrollbar(self.table_frame, orient="vertical", command=self.analysis_table.yview)
+        self.x_scrollbar = ttk.Scrollbar(self.table_frame, orient="horizontal", command=self.analysis_table.xview)
+        self.analysis_table.configure(yscrollcommand=self.y_scrollbar.set, xscrollcommand=self.x_scrollbar.set)
+
+        # Place the table and scrollbars in the frame
+        self.analysis_table.grid(row=1, column=0, sticky="nsew")
+        self.y_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.x_scrollbar.grid(row=2, column=0, sticky="ew")
 
     def _create_dqdv_tab(self):
         """Create the Differential Capacity tab with plot area and statistics."""
@@ -838,63 +866,62 @@ class FileSelector:
             self.analysis_table.tag_configure('separator', background='#f0f0f0')
             self.analysis_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
 
-    def _export_analysis_table(self, table=None, file_prefix=None):
+    def _update_analysis_table(self, features_df=None):
         """
-        Export the specified table to an Excel file.
+        Update the analysis table with data from the processed files for selected cycles.
 
-        Args:
-            table: The ttk.Treeview widget to export. If None, uses self.analysis_table.
-            file_prefix: Optional prefix for the default filename.
+        :param features_df: DataFrame containing the extracted features.
+                            If None, attempt to clear the table.
         """
-        # If no table specified, use the analysis table
-        if table is None:
-            table = self.analysis_table
+        # Clear existing items in the table
+        for item in self.analysis_table.get_children():
+            self.analysis_table.delete(item)
 
-        # Check if the table has data
-        if not table.get_children():
-            messagebox.showinfo("Export Table", "No data to export.")
+        # If no data provided, exit early
+        if features_df is None or features_df.empty:
             return
 
-        # Set up default filename based on the provided prefix or use the default
-        if file_prefix:
-            default_file = f"{file_prefix}.xlsx"
-        else:
-            default_file = os.path.basename(self.default_output_file)
+        # Get unique cell IDs
+        cell_ids = features_df['cell ID'].unique()
 
-        default_dir = os.path.dirname(os.path.abspath(self.default_output_file))
+        # Process data for each cell ID
+        for cell_id in cell_ids:
+            cell_data = features_df[features_df['cell ID'] == cell_id]
 
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-            initialdir=default_dir,
-            initialfile=default_file
-        )
+            # Create a row for this cell with values for all cycles
+            row_values = [cell_id]
 
-        if not file_path:
-            return  # User cancelled
+            # Add data for each selected cycle
+            for cycle in self.selected_cycles:
+                cycle_data = cell_data[cell_data['Cycle'] == cycle]
 
-        try:
-            # Create a DataFrame from the table data
-            data = []
-            columns = table["columns"]
+                # If we have data for this cycle, add it to the row
+                if not cycle_data.empty:
+                    for metric in self.metrics:
+                        value = cycle_data.iloc[0].get(metric, 0)
+                        row_values.append(f"{float(value):.1f}" if pd.notnull(value) else "-")
+                else:
+                    # No data for this cycle, add placeholder values
+                    row_values.extend(["-", "-", "-"])
 
-            for item_id in table.get_children():
-                item_values = table.item(item_id)["values"]
-                data.append(dict(zip(columns, item_values)))
+            # Insert the row into the table
+            self.analysis_table.insert('', 'end', values=row_values)
 
-            # Convert to DataFrame and export
-            df = pd.DataFrame(data)
-            df.to_excel(file_path, index=False)
+        # Calculate and display statistics (mean, std dev, etc.)
+        if len(self.analysis_table.get_children()) > 0:
+            # Add a separator row
+            separator_id = self.analysis_table.insert('', 'end', values=['-'] * len(row_values))
+            self.analysis_table.item(separator_id, tags=('separator',))
 
-            messagebox.showinfo("Export Successful", f"Table data exported to {file_path}")
-            logging.debug(f"FILE_SELECTOR. Table data exported to {file_path}")
+            # Add statistics rows
+            self._add_statistics_rows(features_df)
 
-        except Exception as e:
-            messagebox.showerror("Export Failed", f"An error occurred: {str(e)}")
-            logging.debug(f"FILE_SELECTOR. Error exporting table data: {e}")
+            # Apply styling
+            self.analysis_table.tag_configure('separator', background='#f0f0f0')
+            self.analysis_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
 
-    def _add_statistics_rows(self, features_df, metrics):
-        """Add statistics rows to the analysis table for all cycles."""
+    def _add_statistics_rows(self, features_df):
+        """Add statistics rows to the analysis table for all selected cycles."""
         # For each statistic type (mean, std dev, rsd)
         stat_types = [
             ('Average', 'mean', '{:.1f}'),
@@ -905,12 +932,12 @@ class FileSelector:
         for label, func, format_str in stat_types:
             row_values = [label]
 
-            # Calculate statistics for each cycle and metric
-            for cycle in [1, 2, 3]:
+            # Calculate statistics for each selected cycle and metric
+            for cycle in self.selected_cycles:
                 cycle_data = features_df[features_df['Cycle'] == cycle]
 
                 if not cycle_data.empty:
-                    for metric in metrics:
+                    for metric in self.metrics:
                         if metric in cycle_data.columns:
                             values = pd.to_numeric(cycle_data[metric], errors='coerce')
 
@@ -1161,3 +1188,59 @@ class FileSelector:
                 "Export Completed",
                 f"Successfully exported raw data for {files_exported} files to:\n{export_dir}"
             )
+
+    # Add this method to the FileSelector class in file_selector.py
+    def _export_analysis_table(self, table=None, file_prefix=None):
+        """
+        Export the specified table to an Excel file.
+
+        Args:
+            table: The ttk.Treeview widget to export. If None, uses self.analysis_table.
+            file_prefix: Optional prefix for the default filename.
+        """
+        # If no table specified, use the analysis table
+        if table is None:
+            table = self.analysis_table
+
+        # Check if the table has data
+        if not table.get_children():
+            messagebox.showinfo("Export Table", "No data to export.")
+            return
+
+        # Set up default filename based on the provided prefix or use the default
+        if file_prefix:
+            default_file = f"{file_prefix}.xlsx"
+        else:
+            default_file = os.path.basename(self.default_output_file)
+
+        default_dir = os.path.dirname(os.path.abspath(self.default_output_file))
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            initialdir=default_dir,
+            initialfile=default_file
+        )
+
+        if not file_path:
+            return  # User cancelled
+
+        try:
+            # Create a DataFrame from the table data
+            data = []
+            columns = table["columns"]
+
+            for item_id in table.get_children():
+                item_values = table.item(item_id)["values"]
+                data.append(dict(zip(columns, item_values)))
+
+            # Convert to DataFrame and export
+            df = pd.DataFrame(data)
+            df.to_excel(file_path, index=False)
+
+            messagebox.showinfo("Export Successful", f"Table data exported to {file_path}")
+            logging.debug(f"FILE_SELECTOR. Table data exported to {file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"An error occurred: {str(e)}")
+            logging.debug(f"FILE_SELECTOR. Error exporting table data: {e}")
