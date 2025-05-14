@@ -194,11 +194,16 @@ class Features:
 
         """
         Helper method to calculate dQ/dV for either charge or discharge data.
+        Now with option to skip smoothing entirely for high C-rate discharge.
 
         Args:
             data: DataFrame containing either charge or discharge data
             direction: String indicating 'charge' or 'discharge'
             mass: Active material mass in g
+            smoothing_method: Type of smoothing to apply
+            window_length: Window length for smoothing
+            weights: Optional weights for weighted moving average
+            pre_smooth: Whether to apply pre-smoothing
 
         Returns:
             Dictionary with voltage, dQ/dV data and smoothed dQ/dV data
@@ -222,10 +227,26 @@ class Features:
         voltage = data['Voltage'].values
         capacity = data[capacity_col].values
 
-        # Here we will add a pre-smoothing step
-        # Apply pre-smoothing to capacity data before differentiation if enabled
-        if pre_smooth:
-            # Use a smaller window for pre-smoothing to preserve peak shapes
+        # Check if this is high C-rate discharge data
+        skip_smoothing = False
+        if direction == 'discharge' and 'Time' in data.columns and len(data) > 10:
+            # Calculate average time step between measurements
+            time_steps = data['Time'].diff().dropna()
+            avg_time_step = time_steps.mean()
+
+            # Detect if this is high C-rate discharge (fast acquisition)
+            is_high_crate = avg_time_step < 6.0  # Threshold of 6 seconds
+
+            if is_high_crate:
+                # For high C-rate discharge, skip smoothing entirely
+                skip_smoothing = True
+                logging.debug(f"High C-rate discharge detected: {avg_time_step:.2f} sec/sample")
+                logging.debug(f"Skipping smoothing to preserve features")
+
+        # Apply pre-smoothing to capacity data before differentiation
+        # Skip this step for high C-rate discharge
+        if pre_smooth and not skip_smoothing:
+            # Standard pre-smoothing window
             pre_smooth_window = min(window_length, max(5, len(capacity) // 10))
 
             if smoothing_method == 'savgol':
@@ -233,7 +254,7 @@ class Features:
                 if pre_smooth_window % 2 == 0:
                     pre_smooth_window += 1
 
-                # Use a lower polynomial order (2) for capacity smoothing
+                # Use standard polynomial order
                 capacity = self._apply_savgol_filter(capacity, pre_smooth_window, 2)
             else:
                 # Use SMA for pre-smoothing as a safe default
@@ -279,20 +300,19 @@ class Features:
         # Normalize by mass if needed
         specific_dqdv = dqdv / mass
 
-        # Apply Savitzky-Golay filter for smoothing (from DiffCapAnalyzer)
-        # smoothed_dqdv = self._apply_savgol_filter(specific_dqdv)
-
-        # Apply smoothing based on method
-        if smoothing_method == 'savgol':
-            smoothed_dqdv = self._apply_savgol_filter(specific_dqdv, window_length)
-        elif smoothing_method in ['sma', 'wma', 'ema']:
-            smoothed_dqdv = self._apply_moving_average(
-                specific_dqdv,
-                window_length=window_length,
-                method=smoothing_method,
-                weights=weights)
-
-
+        # For high C-rate discharge, use raw data (no smoothing)
+        if skip_smoothing:
+            smoothed_dqdv = specific_dqdv  # Use raw data without smoothing
+        else:
+            # Apply smoothing based on method
+            if smoothing_method == 'savgol':
+                smoothed_dqdv = self._apply_savgol_filter(specific_dqdv, window_length)
+            elif smoothing_method in ['sma', 'wma', 'ema']:
+                smoothed_dqdv = self._apply_moving_average(
+                    specific_dqdv,
+                    window_length=window_length,
+                    method=smoothing_method,
+                    weights=weights)
 
         return {
             'voltage': v_mid,
