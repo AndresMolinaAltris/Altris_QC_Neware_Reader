@@ -149,52 +149,12 @@ class Features:
         except Exception:
             features["Coulombic Efficiency (%)"] = np.nan
 
-    def extract_dqdv(self, df, cycle, mass=1.0):
-        """
-        Calculates differential capacity (dQ/dV) for both charge and discharge cycles.
-
-        Uses methodology adapted from DiffCapAnalyzer for robust dQ/dV calculations
-        with appropriate data cleaning and smoothing.
-
-        Args:
-            df: pandas DataFrame containing experimental data
-            cycle: Integer representing the cycle number to extract data from
-            mass: Float representing the mass of active material (default: 1.0 g)
-
-        Returns:
-            Dictionary containing dQ/dV data for charge and discharge
-        """
-        try:
-            # Filter data for the specified cycle
-            cycle_df = df[df["Cycle"] == int(cycle)].copy()
-
-            # Define a minimum number of points required for proper calculation
-            if len(cycle_df) < 10:
-                return None
-
-            # Separate charge and discharge data
-            charge_data = cycle_df[cycle_df["Status"] == "CC_Chg"].copy()
-            discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
-
-            # Get dQ/dV data for charge and discharge
-            charge_dqdv = self._calculate_dqdv(charge_data, 'charge', mass, pre_smooth=True)
-            discharge_dqdv = self._calculate_dqdv(discharge_data, 'discharge', mass, pre_smooth=True)
-
-            return {
-                'charge': charge_dqdv,
-                'discharge': discharge_dqdv
-            }
-
-        except Exception as e:
-            logging.debug(f"Error calculating dQ/dV: {e}")
-            return None
-
     def _calculate_dqdv(self, data, direction, mass=1.0, smoothing_method='sma', window_length=15, weights=None,
                         pre_smooth=True):
 
         """
         Helper method to calculate dQ/dV for either charge or discharge data.
-        Now with option to skip smoothing entirely for high C-rate discharge.
+        Option to skip smoothing entirely for high C-rate discharge.
 
         Args:
             data: DataFrame containing either charge or discharge data
@@ -235,7 +195,7 @@ class Features:
             avg_time_step = time_steps.mean()
 
             # Detect if this is high C-rate discharge (fast acquisition)
-            is_high_crate = avg_time_step < 6.0  # Threshold of 6 seconds
+            is_high_crate = avg_time_step < 6.0  # Threshold of 6 seconds based on analysis of the data
 
             if is_high_crate:
                 # For high C-rate discharge, skip smoothing entirely
@@ -319,6 +279,46 @@ class Features:
             'dqdv': specific_dqdv,
             'smoothed_dqdv': smoothed_dqdv
         }
+
+    def extract_dqdv(self, df, cycle, mass=1.0):
+        """
+        Calculates differential capacity (dQ/dV) for both charge and discharge cycles.
+
+        Uses methodology adapted from DiffCapAnalyzer for robust dQ/dV calculations
+        with appropriate data cleaning and smoothing.
+
+        Args:
+            df: pandas DataFrame containing experimental data
+            cycle: Integer representing the cycle number to extract data from
+            mass: Float representing the mass of active material (default: 1.0 g)
+
+        Returns:
+            Dictionary containing dQ/dV data for charge and discharge
+        """
+        try:
+            # Filter data for the specified cycle
+            cycle_df = df[df["Cycle"] == int(cycle)].copy()
+
+            # Define a minimum number of points required for proper calculation
+            if len(cycle_df) < 10:
+                return None
+
+            # Separate charge and discharge data
+            charge_data = cycle_df[cycle_df["Status"] == "CC_Chg"].copy()
+            discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
+
+            # Get dQ/dV data for charge and discharge
+            charge_dqdv = self._calculate_dqdv(charge_data, 'charge', mass, pre_smooth=True)
+            discharge_dqdv = self._calculate_dqdv(discharge_data, 'discharge', mass, pre_smooth=True)
+
+            return {
+                'charge': charge_dqdv,
+                'discharge': discharge_dqdv
+            }
+
+        except Exception as e:
+            logging.debug(f"Error calculating dQ/dV: {e}")
+            return None
 
     def _apply_savgol_filter(self, data, window_length=15, polyorder=3):
         """
