@@ -585,7 +585,7 @@ class FileSelector:
 
         return dqdv_tab
 
-    # Action Methods
+    ############## ACTION METHODS ###########################
     def _browse_directory(self):
         """Open dialog to select a directory and update the file list."""
         dir_path = filedialog.askdirectory(initialdir=self.current_dir.get())
@@ -639,7 +639,6 @@ class FileSelector:
                 self.selected_files.remove(full_path)
             self.selected_listbox.delete(i)
 
-    # In file_selector.py, modify the _process_files method:
     def _process_files(self, callback):
         """Process the selected files using the provided callback function."""
         logging.debug("FILE_SELECTOR._process_files func started")
@@ -1189,7 +1188,6 @@ class FileSelector:
                 f"Successfully exported raw data for {files_exported} files to:\n{export_dir}"
             )
 
-    # Add this method to the FileSelector class in file_selector.py
     def _export_analysis_table(self, table=None, file_prefix=None):
         """
         Export the specified table to an Excel file.

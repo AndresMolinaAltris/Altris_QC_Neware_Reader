@@ -21,7 +21,7 @@ logging.debug("MAIN. QC Neware Reader Started")
 
 
 def process_files(ndax_file_list, db, selected_cycles=None, output_file=None, enable_plotting=True,
-                  save_plots_dir=None, gui_callback=None):
+                gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
 
@@ -31,7 +31,6 @@ def process_files(ndax_file_list, db, selected_cycles=None, output_file=None, en
         selected_cycles: List of 3 cycle numbers to process and display (default: [1, 2, 3])
         output_file: Path to save output file (optional)
         enable_plotting: Whether to generate plots
-        save_plots_dir: Directory to save plots (optional)
         gui_callback: Callback function for updating GUI
 
     Returns:
@@ -318,7 +317,6 @@ def main():
             selected_cycles=selected_cycles,  # Pass the selected cycles
             output_file=output_file,  # Changed parameter name from batch_output to output_file
             enable_plotting=enable_plotting,
-            save_plots_dir=plots_dir,
             gui_callback=file_selector_instance.update_plot
         )
 
