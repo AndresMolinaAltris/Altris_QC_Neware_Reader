@@ -20,6 +20,51 @@ configure_logging(base_directory)
 logging.debug("MAIN. QC Neware Reader Started")
 
 
+def data_loader(ndax_file_list,
+                db,
+                selected_cycles=None):
+    # Use default cycles if none provided
+    if selected_cycles is None or len(selected_cycles) == 0:
+        selected_cycles = [1, 2, 3]
+
+        # Ensure we have exactly 3 cycles (pad or trim as needed)
+    while len(selected_cycles) < 3:
+        selected_cycles.append(selected_cycles[-1] + 1 if selected_cycles else 1)
+    selected_cycles = selected_cycles[:3]  # Limit to first 3 cycles if more provided
+
+    # Create a cache for the processed NDAX files
+    ndax_data_cache = {}
+
+    # Process each file
+    for file in ndax_file_list:
+        filename_stem = Path(file).stem
+        cell_ID = extract_cell_id(filename_stem)
+        logging.debug(f"MAIN.Processing cell ID: {cell_ID}")
+
+        sample_name = extract_sample_name(filename_stem)
+        logging.debug(f"Main.Processing sample: {sample_name}")
+
+        # Read data from Neware NDA file - only once
+        logging.debug(f"MAIN.Reading file: {file}")
+        df = NewareNDA.read(file)
+
+        # Store the processed data in the cache
+        ndax_data_cache[filename_stem] = df
+
+        # Extract active mass
+        mass = db.get_mass(cell_ID)
+        logging.debug(f'MAIN.Mass for cell {cell_ID} is {mass}')
+
+        # Store the processed data and metadata in the cache
+        ndax_data_cache[filename_stem] = {
+            "df": df,
+            "cell_id": cell_ID,
+            "mass": mass,
+            "sample_name": sample_name
+        }
+
+    return ndax_data_cache, selected_cycles
+
 def process_files(ndax_file_list,
                   db,
                   selected_cycles=None,
@@ -155,6 +200,7 @@ def process_files(ndax_file_list,
                             logging.debug("GUI callback has update_dqdv_plot method")
                             # Extract plateau statistics
                             plateau_stats = extract_plateau_stats(ndax_data_cache, db, selected_cycles)
+                            #plateau_stats = extract_plateau_stats(ndax_data_cache, selected_cycles)
                             logging.debug(f"Extracted {len(plateau_stats)} plateau stats entries")
                             # Call the update method
                             try:
@@ -182,6 +228,56 @@ def process_files(ndax_file_list,
     else:
         logging.debug("MAIN.No features extracted, process_files func finished.")
         return pd.DataFrame()
+
+
+# def extract_plateau_stats(ndax_data_cache, selected_cycles=None):
+#     """
+#     Extract plateau capacity statistics from the processed data for display in the UI.
+#
+#     Args:
+#         ndax_data_cache: Dictionary from data_loader containing processed NDAX data
+#         selected_cycles: List of cycles to extract plateaus for (default: [1, 2, 3])
+#
+#     Returns:
+#         List of dictionaries with plateau capacity statistics
+#     """
+#     # Use default cycles if none provided
+#     if selected_cycles is None:
+#         selected_cycles = [1, 2, 3]
+#
+#     stats = []
+#
+#     # Create a DQDVAnalysis object for plateau extraction
+#     dqdvanalysis_obj = DQDVAnalysis("plateau_extractor")
+#
+#     for file_name, data in ndax_data_cache.items():
+#         # Get DataFrame and mass from cache
+#         df = data["df"]
+#         mass = data["mass"]
+#         cell_id = data["cell_id"]
+#
+#         # Extract plateaus for each selected cycle
+#         for cycle in selected_cycles:
+#             # Skip if cycle doesn't exist in this file
+#             if cycle not in df['Cycle'].unique():
+#                 logging.debug(f"Cycle {cycle} not found in file {file_name}, skipping plateau extraction")
+#                 continue
+#
+#             try:
+#                 # Extract plateau capacities
+#                 plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass)
+#
+#                 if plateau_data:
+#                     # Add file and cycle information
+#                     plateau_data["File"] = file_name
+#                     plateau_data["Cycle"] = cycle
+#
+#                     # Add to statistics
+#                     stats.append(plateau_data)
+#             except Exception as e:
+#                 logging.debug(f"Error extracting plateau data for {file_name}, cycle {cycle}: {e}")
+#
+#     return stats
 
 
 def extract_plateau_stats(ndax_data_cache, db, selected_cycles=None):

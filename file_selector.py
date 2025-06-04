@@ -3,8 +3,6 @@ from common.imports import (
     logging, FigureCanvasTkAgg, Figure, plt
 )
 
-from tkinter import simpledialog  # For creating custom dialogs
-
 
 # Add this new class for the cycle selection dialog
 class CycleSelectionDialog(tk.Toplevel):
@@ -859,7 +857,7 @@ class FileSelector:
             self.analysis_table.item(separator_id, tags=('separator',))
 
             # Add statistics rows
-            self._add_statistics_rows(features_df, metrics)
+            self._add_statistics_rows(features_df)
 
             # Apply styling
             self.analysis_table.tag_configure('separator', background='#f0f0f0')
