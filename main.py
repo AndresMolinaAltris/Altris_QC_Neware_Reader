@@ -1,5 +1,5 @@
 import sys
-from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA, np
+from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA
 from common.project_imports import (
     extract_cell_id, extract_sample_name, Features,
     CellDatabase, NewarePlotter, FileSelector,
@@ -20,8 +20,11 @@ configure_logging(base_directory)
 logging.debug("MAIN. QC Neware Reader Started")
 
 
-def process_files(ndax_file_list, db, selected_cycles=None, output_file=None, enable_plotting=True,
-                gui_callback=None):
+def process_files(ndax_file_list,
+                  db,
+                  selected_cycles=None,
+                  enable_plotting=True,
+                  gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
 
@@ -29,7 +32,6 @@ def process_files(ndax_file_list, db, selected_cycles=None, output_file=None, en
         ndax_file_list: List of NDAX files to process
         db: CellDatabase instance
         selected_cycles: List of 3 cycle numbers to process and display (default: [1, 2, 3])
-        output_file: Path to save output file (optional)
         enable_plotting: Whether to generate plots
         gui_callback: Callback function for updating GUI
 
@@ -114,11 +116,6 @@ def process_files(ndax_file_list, db, selected_cycles=None, output_file=None, en
     # Combine all results into a single DataFrame
     if all_features:
         final_features_df = pd.concat(all_features, ignore_index=True)
-
-        # Save results if output file is specified
-        if output_file:
-            logging.debug(f"MAIN.Saving results to {output_file}...")
-            final_features_df.to_excel(output_file, index=False)
 
         # Generate plots if enabled
         if enable_plotting and ndax_file_list:
@@ -253,7 +250,6 @@ def main():
     # Import paths
     data_path = config["data_path"]
     cell_database = config["cell_database_path"]
-    use_gui = config.get("use_gui", True)  # Add a new config option for GUI
     output_file = config.get("output_file", "extracted_features.xlsx")
     enable_plotting = config.get("enable_plotting", True)  # New config option for plotting
     plots_dir = config.get("plots_directory", "plots")  # New config option for plot save directory
@@ -302,10 +298,6 @@ def main():
         if len(ndax_file_list) > 5:
             logging.debug(f"MAIN.  ... and {len(ndax_file_list) - 5} more files")
 
-        # Process current batch of files
-        batch_number = len(all_processed_features) + 1
-        output_file = None  # Changed from batch_output to output_file
-
         # Get selected cycles from the file selector
         selected_cycles = file_selector_instance.selected_cycles
         logging.debug(f"MAIN.Using selected cycles: {selected_cycles}")
@@ -315,7 +307,6 @@ def main():
             ndax_file_list,
             db,
             selected_cycles=selected_cycles,  # Pass the selected cycles
-            output_file=output_file,  # Changed parameter name from batch_output to output_file
             enable_plotting=enable_plotting,
             gui_callback=file_selector_instance.update_plot
         )

@@ -48,26 +48,6 @@ class Features:
 
         return pd.DataFrame(features, index=[0])
 
-    def extract_internal_resistance_soc_100(self, df, features, cycle):
-        """
-        Extracts internal resistance at SOC = 100% from the dataset.
-
-        :param df: pandas DataFrame containing experimental data.
-        :param features: Dictionary to store extracted features.
-        :param cycle: Integer representing the cycle number.
-        """
-        try:
-            idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 3)
-            index = df[idx].index[-1]
-            ocv = round(df["Voltage"][index], 4)
-            ocv_dV = round(df["Voltage"][index + 1], 4)
-            delta_current = abs(df["Current(mA)"][index + 1] - df["Current(mA)"][index])
-            delta_V = abs(ocv_dV - ocv)
-            internal_resistance = delta_V / (delta_current / 1000)
-            features["Internal Resistance at SOC 100 (Ohms)"] = round(internal_resistance, 4)
-        except Exception:
-            features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
-
     def extract_internal_resistance_soc_0(self, df, features, cycle):
         """
         Extracts internal resistance at SOC = 0% from the dataset.
@@ -88,6 +68,26 @@ class Features:
             features["Internal Resistance at SOC 0 (Ohms)"] = round(internal_resistance, 4)
         except Exception:
             features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
+
+    def extract_internal_resistance_soc_100(self, df, features, cycle):
+        """
+        Extracts internal resistance at SOC = 100% from the dataset.
+
+        :param df: pandas DataFrame containing experimental data.
+        :param features: Dictionary to store extracted features.
+        :param cycle: Integer representing the cycle number.
+        """
+        try:
+            idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 3)
+            index = df[idx].index[-1]
+            ocv = round(df["Voltage"][index], 4)
+            ocv_dV = round(df["Voltage"][index + 1], 4)
+            delta_current = abs(df["Current(mA)"][index + 1] - df["Current(mA)"][index])
+            delta_V = abs(ocv_dV - ocv)
+            internal_resistance = delta_V / (delta_current / 1000)
+            features["Internal Resistance at SOC 100 (Ohms)"] = round(internal_resistance, 4)
+        except Exception:
+            features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
 
     def extract_charge_capacity(self, df, features, cycle, mass=1.0):
         """
@@ -148,6 +148,8 @@ class Features:
                 features["Coulombic Efficiency (%)"] = np.nan
         except Exception:
             features["Coulombic Efficiency (%)"] = np.nan
+
+    ########### DIFERENTIAL CAPACITY FUNCTIONS ########################
 
     def _calculate_dqdv(self, data, direction, mass=1.0, smoothing_method='sma', window_length=15, weights=None,
                         pre_smooth=True):
