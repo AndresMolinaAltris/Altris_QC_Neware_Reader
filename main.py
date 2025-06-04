@@ -1,7 +1,7 @@
 import sys
 from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA
 from common.project_imports import (
-    extract_cell_id, extract_sample_name, Features,
+    extract_cell_id, extract_sample_name, Features, DQDVAnalysis,
     CellDatabase, NewarePlotter, FileSelector,
     configure_logging
 )
@@ -83,6 +83,9 @@ def process_files(ndax_file_list,
         # Create a Features object once per file
         features_obj = Features(file)
 
+        # Create a DQDVAnalysis object once per file
+        dqdvanalysis_obj = DQDVAnalysis(file)
+
         # Initialize dQ/dV data dictionary for this file
         dqdv_data[filename_stem] = {}
 
@@ -109,7 +112,8 @@ def process_files(ndax_file_list,
             all_features.append(feature_df)
 
             # Calculate dQ/dV data for this cycle
-            dqdv_result = features_obj.extract_dqdv(df, cycle, mass)
+            dqdv_result = dqdvanalysis_obj.extract_dqdv(df, cycle, mass)
+
             if dqdv_result:
                 dqdv_data[filename_stem][cycle] = dqdv_result
 
@@ -198,8 +202,8 @@ def extract_plateau_stats(ndax_data_cache, db, selected_cycles=None):
 
     stats = []
 
-    # Create a Features object for plateau extraction
-    features_obj = Features("plateau_extractor")
+    # Create a DQDVAnalysis object for plateau extraction
+    dqdvanalysis_obj = DQDVAnalysis("plateau_extractor")
 
     for file_name, df in ndax_data_cache.items():
         # Get cell ID and mass for specific capacity calculations
@@ -215,7 +219,9 @@ def extract_plateau_stats(ndax_data_cache, db, selected_cycles=None):
 
             try:
                 # Extract plateau capacities
-                plateau_data = features_obj.extract_plateaus(df, cycle, mass)
+                #plateau_data = features_obj.extract_plateaus(df, cycle, mass)
+                plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass)
+
 
                 if plateau_data:
                     # Add file and cycle information

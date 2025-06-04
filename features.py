@@ -149,7 +149,15 @@ class Features:
         except Exception:
             features["Coulombic Efficiency (%)"] = np.nan
 
-    ########### DIFERENTIAL CAPACITY FUNCTIONS ########################
+
+class DQDVAnalysis:
+    """
+        A class to extract differential capacity  features from a given Neware dataset.
+        Handles missing data by assigning NaN to failed extractions.
+        """
+
+    def __init__(self, input_key):
+        self.input_key = input_key
 
     def _calculate_dqdv(self, data, direction, mass=1.0, smoothing_method='sma', window_length=15, weights=None,
                         pre_smooth=True):
@@ -585,3 +593,4 @@ class Features:
                 result['discharge_transition_voltage'] = float(filtered_voltage[flattest_idx])
 
         return result
+
