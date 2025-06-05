@@ -6,6 +6,8 @@ from common.project_imports import (
     configure_logging
 )
 
+import traceback
+
 sys.path.append(str(Path(__file__).parent))
 
 
@@ -23,6 +25,7 @@ logging.debug("MAIN. QC Neware Reader Started")
 def data_loader(ndax_file_list,
                 db,
                 selected_cycles=None):
+
     # Use default cycles if none provided
     if selected_cycles is None or len(selected_cycles) == 0:
         selected_cycles = [1, 2, 3]
@@ -62,8 +65,69 @@ def data_loader(ndax_file_list,
             "mass": mass,
             "sample_name": sample_name
         }
-
     return ndax_data_cache, selected_cycles
+
+# def extract_plateau_stats(ndax_data_cache, selected_cycles=None):
+#     """
+#     Extract plateau capacity statistics from the processed data for display in the UI.
+#
+#     Args:
+#         ndax_data_cache: Dictionary from data_loader containing processed NDAX data
+#         selected_cycles: List of cycles to extract plateaus for (default: [1, 2, 3])
+#
+#     Returns:
+#         List of dictionaries with plateau capacity statistics
+#     """
+#     logging.debug("MAIN.extract_plateau_stats started")
+#
+#     # Use default cycles if none provided
+#     if selected_cycles is None:
+#         selected_cycles = [1, 2, 3]
+#
+#     stats = []
+#     # Create a DQDVAnalysis object for plateau extraction
+#     dqdvanalysis_obj = DQDVAnalysis("plateau_extractor")
+#
+#     for file_name, df in ndax_data_cache.items():
+#         #for key, df in ndax_data_cache.items():
+#          #   print(f"Headers for {key}: {df.columns.tolist()}")
+#
+#         ############### I'M trying to FIGURE OUT THE PART WITH df and data, there is a problem here ########
+#         ### IT SEEMS THAT THE DATALOADER IS NOT BEING CALLED AT ALL! ####################################
+#         # THE DATA LOADER FUNCTION IS NOT BEING CALLED ANYWHERE #########################################
+#
+#         # Get DataFrame and mass from cache
+#         #print(df.columns)
+#         #df = data["df"]
+#         #mass = data["mass"]
+#         #cell_id = data["cell_id"]
+#
+#         # Extract plateaus for each selected cycle
+#         for cycle in selected_cycles:
+#             # Skip if cycle doesn't exist in this file
+#             if cycle not in df['Cycle'].unique():
+#                 logging.debug(f"Cycle {cycle} not found in file {file_name}, skipping plateau extraction")
+#                 continue
+#
+#             try:
+#                 # Extract plateau capacities
+#                 logging.debug("MAIN.extracting plateau data")
+#                 plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass)
+#
+#                 if plateau_data:
+#                     # Add file and cycle information
+#                     plateau_data["File"] = file_name
+#                     plateau_data["Cycle"] = cycle
+#
+#                     # Add to statistics
+#                     stats.append(plateau_data)
+#             except Exception as e:
+#                 logging.debug(f"Error extracting plateau data for {file_name}, cycle {cycle}: {e}")
+#
+#     logging.debug("MAIN.extract_plateau_stats finished")
+#
+#     return stats
+
 
 def process_files(ndax_file_list,
                   db,
@@ -193,30 +257,29 @@ def process_files(ndax_file_list,
 
                 # If we have a GUI and dQ/dV plot, update the dQ/dV tab
                 if gui_callback:
-                    logging.debug(f"GUI callback exists: {gui_callback}")
+                    logging.debug(f"MAIN.GUI callback exists: {gui_callback}")
                     if dqdv_fig:
-                        logging.debug(f"dQ/dV figure exists: {dqdv_fig}")
+                        logging.debug(f"MAIN.dQ/dV figure exists: {dqdv_fig}")
                         if hasattr(gui_callback.__self__, 'update_dqdv_plot'):
-                            logging.debug("GUI callback has update_dqdv_plot method")
+                            logging.debug("MAIN.GUI callback has update_dqdv_plot method")
                             # Extract plateau statistics
                             plateau_stats = extract_plateau_stats(ndax_data_cache, db, selected_cycles)
                             #plateau_stats = extract_plateau_stats(ndax_data_cache, selected_cycles)
-                            logging.debug(f"Extracted {len(plateau_stats)} plateau stats entries")
+                            logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
                             # Call the update method
                             try:
-                                logging.debug("Calling update_dqdv_plot method")
+                                logging.debug("MAIN.Calling update_dqdv_plot method")
                                 gui_callback.__self__.update_dqdv_plot(dqdv_fig, plateau_stats)
-                                logging.debug("update_dqdv_plot method call completed")
+                                logging.debug("MAIN.update_dqdv_plot method call completed")
                             except Exception as e:
-                                logging.debug(f"Error in update_dqdv_plot: {e}")
-                                import traceback
+                                logging.debug(f"MAIN.Error in update_dqdv_plot: {e}")
                                 logging.debug(traceback.format_exc())
                         else:
-                            logging.debug("GUI callback does not have update_dqdv_plot method")
+                            logging.debug("MAIN.GUI callback does not have update_dqdv_plot method")
                     else:
-                        logging.debug("No dQ/dV figure generated")
+                        logging.debug("MAIN.No dQ/dV figure generated")
                 else:
-                    logging.debug("No GUI callback provided")
+                    logging.debug("MAIN.No GUI callback provided")
 
                 logging.debug("MAIN.Plotting complete.")
 
@@ -230,54 +293,7 @@ def process_files(ndax_file_list,
         return pd.DataFrame()
 
 
-# def extract_plateau_stats(ndax_data_cache, selected_cycles=None):
-#     """
-#     Extract plateau capacity statistics from the processed data for display in the UI.
-#
-#     Args:
-#         ndax_data_cache: Dictionary from data_loader containing processed NDAX data
-#         selected_cycles: List of cycles to extract plateaus for (default: [1, 2, 3])
-#
-#     Returns:
-#         List of dictionaries with plateau capacity statistics
-#     """
-#     # Use default cycles if none provided
-#     if selected_cycles is None:
-#         selected_cycles = [1, 2, 3]
-#
-#     stats = []
-#
-#     # Create a DQDVAnalysis object for plateau extraction
-#     dqdvanalysis_obj = DQDVAnalysis("plateau_extractor")
-#
-#     for file_name, data in ndax_data_cache.items():
-#         # Get DataFrame and mass from cache
-#         df = data["df"]
-#         mass = data["mass"]
-#         cell_id = data["cell_id"]
-#
-#         # Extract plateaus for each selected cycle
-#         for cycle in selected_cycles:
-#             # Skip if cycle doesn't exist in this file
-#             if cycle not in df['Cycle'].unique():
-#                 logging.debug(f"Cycle {cycle} not found in file {file_name}, skipping plateau extraction")
-#                 continue
-#
-#             try:
-#                 # Extract plateau capacities
-#                 plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass)
-#
-#                 if plateau_data:
-#                     # Add file and cycle information
-#                     plateau_data["File"] = file_name
-#                     plateau_data["Cycle"] = cycle
-#
-#                     # Add to statistics
-#                     stats.append(plateau_data)
-#             except Exception as e:
-#                 logging.debug(f"Error extracting plateau data for {file_name}, cycle {cycle}: {e}")
-#
-#     return stats
+
 
 
 def extract_plateau_stats(ndax_data_cache, db, selected_cycles=None):
@@ -292,6 +308,8 @@ def extract_plateau_stats(ndax_data_cache, db, selected_cycles=None):
     Returns:
         List of dictionaries with plateau capacity statistics
     """
+    logging.debug("MAIN.extract_plateau_stats started")
+
     # Use default cycles if none provided
     if selected_cycles is None:
         selected_cycles = [1, 2, 3]
@@ -302,6 +320,8 @@ def extract_plateau_stats(ndax_data_cache, db, selected_cycles=None):
     dqdvanalysis_obj = DQDVAnalysis("plateau_extractor")
 
     for file_name, df in ndax_data_cache.items():
+        for key, df in ndax_data_cache.items():
+            print(f"Headers for {key}: {df.columns.tolist()}")
         # Get cell ID and mass for specific capacity calculations
         cell_ID = extract_cell_id(file_name)
         mass = db.get_mass(cell_ID) or 1.0
@@ -328,6 +348,8 @@ def extract_plateau_stats(ndax_data_cache, db, selected_cycles=None):
                     stats.append(plateau_data)
             except Exception as e:
                 logging.debug(f"Error extracting plateau data for {file_name}, cycle {cycle}: {e}")
+
+    logging.debug("MAIN.extract_plateau_stats finished")
 
     return stats
 
@@ -356,10 +378,6 @@ def main():
     enable_plotting = config.get("enable_plotting", True)  # New config option for plotting
     plots_dir = config.get("plots_directory", "plots")  # New config option for plot save directory
 
-    # Create plots directory if needed
-    if enable_plotting and not os.path.exists(plots_dir):
-        os.makedirs(plots_dir, exist_ok=True)
-
     # Load cell database with active mass (only once)
     logging.debug("MAIN. Loading cell database...")
     start_time = time.time()
@@ -375,7 +393,6 @@ def main():
     file_selector_instance = FileSelector(initial_dir=data_path, default_output_file=output_file)
 
     # Define a callback function to process files
-    # In main.py, modify the process_file_callback function:
     def process_file_callback(ndax_file_list):
         """
         Callback function for processing batches of NDAX files.

@@ -443,6 +443,8 @@ class DQDVAnalysis:
         Returns:
             Dictionary containing plateau capacities for both charge and discharge
         """
+        logging.debug("FEATURES.extract_plateaus started")
+
         try:
             # Define default transition voltage
             default_transition_voltage = 3.2  # V
@@ -535,10 +537,11 @@ class DQDVAnalysis:
                 result["Discharge Total (mAh/g)"] = round((final_capacity - initial_capacity) / mass, 4)
                 result["Discharge Transition Voltage (V)"] = round(discharge_transition, 4)
 
+            logging.debug("FEATURES.extract_plateaus finished")
             return result
 
         except Exception as e:
-            logging.debug(f"Error calculating plateau capacities: {e}")
+            logging.debug(f"FEATURES.extract_plateaus finished with error. Error calculating plateau capacities: {e}")
             return {
                 "Charge 1st Plateau (mAh/g)": np.nan,
                 "Charge 2nd Plateau (mAh/g)": np.nan,
