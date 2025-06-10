@@ -1,12 +1,10 @@
 import sys
-from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA
+from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA, traceback
 from common.project_imports import (
     extract_cell_id, extract_sample_name, Features, DQDVAnalysis,
     CellDatabase, NewarePlotter, FileSelector,
     configure_logging
 )
-
-import traceback
 
 sys.path.append(str(Path(__file__).parent))
 

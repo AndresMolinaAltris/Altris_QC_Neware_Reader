@@ -12,6 +12,7 @@ import logging.config  # Add this explicit import
 import hashlib
 import pickle
 import re
+import traceback
 from pathlib import Path
 from io import StringIO
 import datetime

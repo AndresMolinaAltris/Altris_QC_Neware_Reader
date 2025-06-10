@@ -1,5 +1,4 @@
 import logging
-
 from common.imports import np, pd
 from scipy.signal import savgol_filter
 
