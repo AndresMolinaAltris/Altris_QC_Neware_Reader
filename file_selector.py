@@ -3,8 +3,6 @@ from common.imports import (
     logging, FigureCanvasTkAgg, Figure, plt
 )
 
-
-# Add this new class for the cycle selection dialog
 class CycleSelectionDialog(tk.Toplevel):
     """Dialog for selecting which cycles to display in plots and analysis."""
 
