@@ -1,5 +1,4 @@
-import logging
-from common.imports import np, pd
+from common.imports import np, pd, logging
 from scipy.signal import savgol_filter
 
 class Features:
@@ -177,6 +176,11 @@ class DQDVAnalysis:
         Returns:
             Dictionary with voltage, dQ/dV data and smoothed dQ/dV data
         """
+        # Handle none mass
+        if mass is None or mass <= 0:
+            logging.debug("DQDVAnalysis: Invalid mass provided, using default 1.0g")
+            mass = 1.0
+
         if data.empty or len(data) < 10:
             return None
 
