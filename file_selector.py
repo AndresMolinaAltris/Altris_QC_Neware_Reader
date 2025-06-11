@@ -804,67 +804,6 @@ class FileSelector:
 
     def _update_analysis_table(self, features_df=None):
         """
-        Update the analysis table with data from the processed files for all cycles.
-
-        :param features_df: DataFrame containing the extracted features.
-                            If None, attempt to clear the table.
-        """
-        # Clear existing items in the table
-        for item in self.analysis_table.get_children():
-            self.analysis_table.delete(item)
-
-        # If no data provided, exit early
-        if features_df is None or features_df.empty:
-            return
-
-        # Get unique cell IDs
-        cell_ids = features_df['cell ID'].unique()
-
-        # Metrics we want to display
-        metrics = [
-            'Specific Charge Capacity (mAh/g)',
-            'Specific Discharge Capacity (mAh/g)',
-            'Coulombic Efficiency (%)'
-        ]
-
-        # Process data for each cell ID
-        for cell_id in cell_ids:
-            cell_data = features_df[features_df['cell ID'] == cell_id]
-
-            # Create a row for this cell with values for all cycles
-            row_values = [cell_id]
-
-            # Add data for each cycle
-            for cycle in [1, 2, 3]:
-                cycle_data = cell_data[cell_data['Cycle'] == cycle]
-
-                # If we have data for this cycle, add it to the row
-                if not cycle_data.empty:
-                    for metric in metrics:
-                        value = cycle_data.iloc[0].get(metric, 0)
-                        row_values.append(f"{float(value):.1f}" if pd.notnull(value) else "-")
-                else:
-                    # No data for this cycle, add placeholder values
-                    row_values.extend(["-", "-", "-"])
-
-            # Insert the row into the table
-            self.analysis_table.insert('', 'end', values=row_values)
-
-        # Calculate and display statistics (mean, std dev, etc.)
-        if len(self.analysis_table.get_children()) > 0:
-            # Add a separator row
-            separator_id = self.analysis_table.insert('', 'end', values=['-'] * len(row_values))
-            self.analysis_table.item(separator_id, tags=('separator',))
-
-            # Add statistics rows
-            self._add_statistics_rows(features_df)
-
-            # Apply styling
-            self.analysis_table.tag_configure('separator', background='#f0f0f0')
-            self.analysis_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
-
-    def _update_analysis_table(self, features_df=None):
-        """
         Update the analysis table with data from the processed files for selected cycles.
 
         :param features_df: DataFrame containing the extracted features.
