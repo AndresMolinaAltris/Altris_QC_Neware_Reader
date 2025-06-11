@@ -180,9 +180,13 @@ def process_files(ndax_file_list,
                     # Update dQ/dV tab if we have the figure
                     if dqdv_fig and hasattr(gui_callback.__self__, 'update_dqdv_plot'):
                         logging.debug("MAIN.GUI callback has update_dqdv_plot method")
+                        # Extract plateau statistics using DQDVAnalysis batch method
+                        dqdv_analyzer = DQDVAnalysis("plateau_extractor")
+                        plateau_stats = dqdv_analyzer.extract_plateaus_batch(data_loader, db, ndax_file_list,
+                                                                             selected_cycles)
                         # Extract plateau statistics
-                        plateau_stats = extract_plateau_stats_with_loader(data_loader, db, ndax_file_list,
-                                                                          selected_cycles)
+                        #plateau_stats = extract_plateau_stats_with_loader(data_loader, db, ndax_file_list,
+                                                                          #selected_cycles)
                         logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
                         # Call the update method
                         try:
@@ -209,77 +213,6 @@ def process_files(ndax_file_list,
         data_loader.clear_cache()
         logging.debug("MAIN.No features extracted, process_files func finished.")
         return pd.DataFrame()
-
-
-def extract_plateau_stats_with_loader(data_loader, db, file_list, selected_cycles=None):
-    """
-    Extract plateau capacity statistics from DataLoader cache for display in the UI.
-
-    Args:
-        data_loader: DataLoader instance containing cached NDAX data
-        db: CellDatabase instance for mass lookup
-        file_list: List of file paths to process
-        selected_cycles: List of cycles to extract plateaus for (default: [1, 2, 3])
-
-    Returns:
-        List of dictionaries with plateau capacity statistics
-    """
-    logging.debug("MAIN.extract_plateau_stats_with_loader started")
-
-    # Use default cycles if none provided
-    if selected_cycles is None:
-        selected_cycles = [1, 2, 3]
-
-    stats = []
-
-    # Create a DQDVAnalysis object for plateau extraction
-    dqdvanalysis_obj = DQDVAnalysis("plateau_extractor")
-
-    for file_path in file_list:
-        # Skip files that failed to load
-        if not data_loader.is_loaded(file_path):
-            logging.debug(f"File {os.path.basename(file_path)} not loaded, skipping plateau extraction")
-            continue
-
-        filename_stem = Path(file_path).stem
-        df = data_loader.get_data(file_path)
-
-        if df is None:
-            logging.debug(f"No data available for {filename_stem}")
-            continue
-
-        # Get cell ID and mass for specific capacity calculations
-        cell_ID = extract_cell_id(filename_stem)
-        mass = db.get_mass(cell_ID)
-
-        # FIX: Handle None mass consistently
-        if mass is None or mass <= 0:
-            logging.warning(f"No mass found for cell ID {cell_ID}, using 1.0g for plateau extraction")
-            mass = 1.0
-
-        # Extract plateaus for each selected cycle
-        for cycle in selected_cycles:
-            # Skip if cycle doesn't exist in this file
-            if cycle not in df['Cycle'].unique():
-                logging.debug(f"Cycle {cycle} not found in file {filename_stem}, skipping plateau extraction")
-                continue
-
-            try:
-                # Extract plateau capacities
-                plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass)
-
-                if plateau_data:
-                    # Add file and cycle information
-                    plateau_data["File"] = filename_stem
-                    plateau_data["Cycle"] = cycle
-
-                    # Add to statistics
-                    stats.append(plateau_data)
-            except Exception as e:
-                logging.debug(f"Error extracting plateau data for {filename_stem}, cycle {cycle}: {e}")
-
-    logging.debug("MAIN.extract_plateau_stats_with_loader finished")
-    return stats
 
 def main():
     """

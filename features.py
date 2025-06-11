@@ -1,4 +1,4 @@
-from common.imports import np, pd, logging
+from common.imports import os, np, pd, logging
 from scipy.signal import savgol_filter
 
 class Features:
@@ -552,6 +552,76 @@ class DQDVAnalysis:
                 "Discharge 2nd Plateau (mAh/g)": np.nan,
                 "Discharge Total (mAh/g)": np.nan
             }
+
+    def extract_plateaus_batch(self, data_loader, db, file_list, selected_cycles=None):
+        """
+        Extract plateau capacity statistics from DataLoader cache for multiple files and cycles.
+
+        Args:
+            data_loader: DataLoader instance containing cached NDAX data
+            db: CellDatabase instance for mass lookup
+            file_list: List of file paths to process
+            selected_cycles: List of cycles to extract plateaus for (default: [1, 2, 3])
+
+        Returns:
+            List of dictionaries with plateau capacity statistics for GUI display
+        """
+        from common.imports import logging, Path
+        from common.project_imports import extract_cell_id
+
+        logging.debug("DQDVAnalysis.extract_plateaus_batch started")
+
+        # Use default cycles if none provided
+        if selected_cycles is None:
+            selected_cycles = [1, 2, 3]
+
+        stats = []
+
+        for file_path in file_list:
+            # Skip files that failed to load
+            if not data_loader.is_loaded(file_path):
+                logging.debug(f"File {os.path.basename(file_path)} not loaded, skipping plateau extraction")
+                continue
+
+            filename_stem = Path(file_path).stem
+            df = data_loader.get_data(file_path)
+
+            if df is None:
+                logging.debug(f"No data available for {filename_stem}")
+                continue
+
+            # Get cell ID and mass for specific capacity calculations
+            cell_ID = extract_cell_id(filename_stem)
+            mass = db.get_mass(cell_ID)
+
+            # Handle None mass consistently
+            if mass is None or mass <= 0:
+                logging.warning(f"No mass found for cell ID {cell_ID}, using 1.0g for plateau extraction")
+                mass = 1.0
+
+            # Extract plateaus for each selected cycle
+            for cycle in selected_cycles:
+                # Skip if cycle doesn't exist in this file
+                if cycle not in df['Cycle'].unique():
+                    logging.debug(f"Cycle {cycle} not found in file {filename_stem}, skipping plateau extraction")
+                    continue
+
+                try:
+                    # Extract plateau capacities using existing method
+                    plateau_data = self.extract_plateaus(df, cycle, mass)
+
+                    if plateau_data:
+                        # Add file and cycle information
+                        plateau_data["File"] = filename_stem
+                        plateau_data["Cycle"] = cycle
+
+                        # Add to statistics
+                        stats.append(plateau_data)
+                except Exception as e:
+                    logging.debug(f"Error extracting plateau data for {filename_stem}, cycle {cycle}: {e}")
+
+        logging.debug("DQDVAnalysis.extract_plateaus_batch finished")
+        return stats
 
     def find_transition_voltage(self, df, cycle, voltage_range=(3.1, 3.3)):
         """
