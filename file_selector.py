@@ -1,6 +1,6 @@
 from common.imports import (
     tk, filedialog, ttk, messagebox, os, pd,
-    logging, FigureCanvasTkAgg, Figure, plt
+    logging, FigureCanvasTkAgg, Figure, plt, re
 )
 #from common.project_imports import DataLoader
 from data_loader import DataLoader # For some reason I cannot import this from common imports
@@ -584,18 +584,25 @@ class FileSelector:
         export_frame = ttk.Frame(stats_frame)
         export_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=5)
 
-        # Right-align the export button
-        export_frame.columnconfigure(0, weight=1)  # This pushes the button to the right
+        # Add export and copy buttons in the export frame
+        export_frame.columnconfigure(0, weight=1)  # This pushes buttons to the right
 
+        # Copy button
+        ttk.Button(
+            export_frame,
+            text="Copy Table",
+            command=self._copy_dqdv_table_to_clipboard
+        ).grid(row=0, column=1, sticky="e", padx=5, pady=5)
+
+        # Export button (existing)
         ttk.Button(
             export_frame,
             text="Export Table",
             command=lambda: self._export_analysis_table(self.dqdv_stats_table, "dqdv_statistics")
-        ).grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        ).grid(row=0, column=2, sticky="e", padx=5, pady=5)
 
         return dqdv_tab
 
-    ############## ACTION METHODS ###########################
     def _browse_directory(self):
         """Open dialog to select a directory and update the file list."""
         dir_path = filedialog.askdirectory(initialdir=self.current_dir.get())
@@ -612,7 +619,6 @@ class FileSelector:
 
             # Sort files by extracting the numeric part from filenames
             # This regex finds sequences of digits in the filename
-            import re
             def extract_number(filename):
                 # Extract all numbers from the filename
                 numbers = re.findall(r'\d+', filename)
@@ -1273,3 +1279,43 @@ class FileSelector:
         except Exception as e:
             messagebox.showerror("Export Failed", f"An error occurred: {str(e)}")
             logging.debug(f"FILE_SELECTOR. Error exporting table data: {e}")
+
+    def _copy_dqdv_table_to_clipboard(self):
+        """
+        Copy the dQ/dV statistics table data to clipboard in tab-separated format.
+        """
+        try:
+            # Check if the table has data
+            if not self.dqdv_stats_table.get_children():
+                messagebox.showinfo("Copy Table", "No data to copy.")
+                return
+
+            # Get column headers
+            columns = self.dqdv_stats_table["columns"]
+
+            # Create header row
+            header_row = "\t".join(columns)
+
+            # Get all data rows
+            data_rows = []
+            for item_id in self.dqdv_stats_table.get_children():
+                item_values = self.dqdv_stats_table.item(item_id)["values"]
+                # Convert all values to strings and join with tabs
+                row_data = "\t".join(str(value) for value in item_values)
+                data_rows.append(row_data)
+
+            # Combine header and data
+            clipboard_content = header_row + "\n" + "\n".join(data_rows)
+
+            # Copy to clipboard
+            self.root.clipboard_clear()
+            self.root.clipboard_append(clipboard_content)
+            self.root.update()  # Ensure clipboard is updated
+
+            # Show confirmation
+            messagebox.showinfo("Copy Successful", f"Copied {len(data_rows)} rows to clipboard.")
+            logging.debug(f"FILE_SELECTOR. dQ/dV table data copied to clipboard: {len(data_rows)} rows")
+
+        except Exception as e:
+            messagebox.showerror("Copy Failed", f"An error occurred: {str(e)}")
+            logging.debug(f"FILE_SELECTOR. Error copying dQ/dV table data: {e}")
