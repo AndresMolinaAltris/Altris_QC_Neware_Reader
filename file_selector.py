@@ -535,9 +535,11 @@ class FileSelector:
             "Charge 1st Cap (mAh/g)", "Charge 1st %",
             "Charge 2nd Cap (mAh/g)", "Charge 2nd %",
             "Charge Total (mAh/g)",
+            "Charge Transition (V)",  # NEW
             "Discharge 1st Cap (mAh/g)", "Discharge 1st %",
             "Discharge 2nd Cap (mAh/g)", "Discharge 2nd %",
-            "Discharge Total (mAh/g)"
+            "Discharge Total (mAh/g)",
+            "Discharge Transition (V)"  # NEW
         ]
 
         # Create the table
@@ -552,11 +554,13 @@ class FileSelector:
             "Charge 2nd Cap (mAh/g)": "Chg 2nd Cap",
             "Charge 2nd %": "Chg 2nd %",
             "Charge Total (mAh/g)": "Chg Total",
+            "Charge Transition (V)": "Chg Trans (V)",  # NEW
             "Discharge 1st Cap (mAh/g)": "Dchg 1st Cap",
             "Discharge 1st %": "Dchg 1st %",
             "Discharge 2nd Cap (mAh/g)": "Dchg 2nd Cap",
             "Discharge 2nd %": "Dchg 2nd %",
-            "Discharge Total (mAh/g)": "Dchg Total"
+            "Discharge Total (mAh/g)": "Dchg Total",
+            "Discharge Transition (V)": "Dchg Trans (V)"  # NEW
         }
 
         # Configure column headings and widths
@@ -1011,13 +1015,17 @@ class FileSelector:
                 discharge_2nd = stat.get('Discharge 2nd Plateau (mAh/g)', 0)
                 discharge_total = stat.get('Discharge Total (mAh/g)', 0)
 
+                # Get transition voltages - NEW
+                charge_transition = stat.get('Charge Transition Voltage (V)', 0)
+                discharge_transition = stat.get('Discharge Transition Voltage (V)', 0)
+
                 # Calculate percentages (handle division by zero)
                 charge_1st_pct = (charge_1st / charge_total * 100) if charge_total != 0 else 0
                 charge_2nd_pct = (charge_2nd / charge_total * 100) if charge_total != 0 else 0
                 discharge_1st_pct = (discharge_1st / discharge_total * 100) if discharge_total != 0 else 0
                 discharge_2nd_pct = (discharge_2nd / discharge_total * 100) if discharge_total != 0 else 0
 
-                # Format values with one decimal place plus percentage in brackets
+                # Format values separately for individual columns
                 formatted_values = [
                     stat.get('File', ''),
                     stat.get('Cycle', ''),
@@ -1026,11 +1034,13 @@ class FileSelector:
                     f"{charge_2nd:.1f}",
                     f"{charge_2nd_pct:.1f}",
                     f"{charge_total:.1f}",
+                    f"{charge_transition:.3f}",  # NEW - Charge transition voltage
                     f"{discharge_1st:.1f}",
                     f"{discharge_1st_pct:.1f}",
                     f"{discharge_2nd:.1f}",
                     f"{discharge_2nd_pct:.1f}",
-                    f"{discharge_total:.1f}"
+                    f"{discharge_total:.1f}",
+                    f"{discharge_transition:.3f}"  # NEW - Discharge transition voltage
                 ]
 
                 # Insert into table
