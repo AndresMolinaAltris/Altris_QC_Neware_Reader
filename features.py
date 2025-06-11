@@ -1,5 +1,5 @@
 from common.imports import os, np, pd, logging, Path
-from scipy.signal import savgol_filter
+from scipy.signal import savgol_filter, find_peaks
 from data_import import extract_cell_id
 
 class Features:
@@ -441,7 +441,7 @@ class DQDVAnalysis:
             cycle: Integer representing the cycle number to extract data from
             mass: Float representing the mass of active material (default: 1.0 g)
             transition_voltage: Optional float to specify the transition voltage
-                If None, will either calculate it or use the default value of 3.2V
+                If None, will use inflection point detection or default to 3.2V
 
         Returns:
             Dictionary containing plateau capacities for both charge and discharge
@@ -452,34 +452,34 @@ class DQDVAnalysis:
             # Define default transition voltage
             default_transition_voltage = 3.2  # V
 
-            # If transition_voltage is not provided, try to calculate it
+            # If transition_voltage is not provided, try inflection point detection
             if transition_voltage is None:
-                # Try to calculate the transition voltage
-                transition_result = self.find_transition_voltage(df, cycle)
+                # Try to find inflection points using new method
+                inflection_result = self.find_inflection_point(df, cycle)
 
-                if transition_result:
-                    # For charge, use the charge transition voltage if available
-                    charge_transition = transition_result.get('charge_transition_voltage')
-                    discharge_transition = transition_result.get('discharge_transition_voltage')
+                if inflection_result:
+                    # Use inflection points if available
+                    charge_transition = inflection_result.get('charge_inflection_voltage')
+                    discharge_transition = inflection_result.get('discharge_inflection_voltage')
 
                     # Log which values we're using
                     if charge_transition:
-                        logging.debug(f"Using calculated charge transition voltage: {charge_transition:.4f}V")
+                        logging.debug(f"Using inflection point for charge transition: {charge_transition:.4f}V")
                     else:
-                        logging.debug(
-                            f"No calculated charge transition voltage, using default: {default_transition_voltage}V")
+                        logging.debug(f"No charge inflection point found, using default: {default_transition_voltage}V")
+                        charge_transition = default_transition_voltage
 
                     if discharge_transition:
-                        logging.debug(f"Using calculated discharge transition voltage: {discharge_transition:.4f}V")
+                        logging.debug(f"Using inflection point for discharge transition: {discharge_transition:.4f}V")
                     else:
                         logging.debug(
-                            f"No calculated discharge transition voltage, using default: {default_transition_voltage}V")
+                            f"No discharge inflection point found, using default: {default_transition_voltage}V")
+                        discharge_transition = default_transition_voltage
                 else:
-                    # If calculation failed, use default
+                    # If inflection detection failed, use default for both
                     charge_transition = default_transition_voltage
                     discharge_transition = default_transition_voltage
-                    logging.debug(
-                        f"Failed to calculate transition voltages, using default: {default_transition_voltage}V")
+                    logging.debug(f"Inflection point detection failed, using default: {default_transition_voltage}V")
             else:
                 # Use the provided transition voltage for both charge and discharge
                 charge_transition = transition_voltage
@@ -666,4 +666,109 @@ class DQDVAnalysis:
                 result['discharge_transition_voltage'] = float(filtered_voltage[flattest_idx])
 
         return result
+
+    def find_inflection_point(self, df, cycle, voltage_range=(2.5, 3.5)):
+        """
+        Find inflection point using dV/dQ gradient analysis with peak detection.
+
+        Args:
+            df: DataFrame with battery data
+            cycle: Cycle number to analyze
+            voltage_range: Tuple with min and max voltage for analysis range
+
+        Returns:
+            Dictionary with charge and discharge inflection voltages
+        """
+        logging.debug("DQDVAnalysis.find_inflection_point started")
+
+        # Filter data for the specified cycle
+        cycle_df = df[df["Cycle"] == int(cycle)].copy()
+
+        if cycle_df.empty:
+            logging.debug(f"No data found for cycle {cycle}")
+            return None
+
+        result = {}
+
+        # Process charge and discharge separately
+        for status, capacity_col in [('CC_Chg', 'Charge_Capacity(mAh)'), ('CC_DChg', 'Discharge_Capacity(mAh)')]:
+            seg_data = cycle_df[cycle_df['Status'] == status].copy()
+
+            if len(seg_data) < 10:
+                logging.debug(f"Insufficient data for {status} in cycle {cycle}")
+                continue
+
+            # Sort data appropriately
+            if status == 'CC_Chg':
+                seg_data = seg_data.sort_values('Voltage', ascending=True)
+            else:
+                seg_data = seg_data.sort_values('Voltage', ascending=False)
+
+            # Get voltage and capacity arrays
+            volt = seg_data['Voltage'].values
+            cap = seg_data[capacity_col].values
+
+            # Calculate dV/dQ derivative
+            dV_dQ = np.gradient(volt, cap)
+
+            # Apply smoothing with 15-point moving average
+            dV_dQ_smooth = np.convolve(dV_dQ, np.ones(15) / 15, mode='same')
+
+            # Filter to voltage range
+            mask = (volt >= voltage_range[0]) & (volt <= voltage_range[1])
+            valid_indices = np.where(mask)[0]
+
+            if len(valid_indices) == 0:
+                logging.debug(f"No data in voltage range {voltage_range} for {status}")
+                continue
+
+            # Extract data in the voltage range
+            sub_dv = dV_dQ_smooth[valid_indices]
+            sub_cap = cap[valid_indices]
+            sub_volt = volt[valid_indices]
+
+            # Exclude edges (5% from each end)
+            min_idx = int(len(sub_dv) * 0.05)
+            max_idx = int(len(sub_dv) * 0.95)
+
+            if max_idx <= min_idx:
+                logging.debug(f"Insufficient data after edge exclusion for {status}")
+                continue
+
+            # Find peaks in derivative
+            try:
+                if status == 'CC_Chg':
+                    # For charge, find positive peaks in dV/dQ
+                    peaks, _ = find_peaks(sub_dv[min_idx:max_idx])
+                else:
+                    # For discharge, find negative peaks (invert signal)
+                    peaks, _ = find_peaks(-sub_dv[min_idx:max_idx])
+
+                if len(peaks) > 0:
+                    # Adjust peak indices to original array
+                    peaks += min_idx
+
+                    # Select the peak with maximum absolute derivative value
+                    best_peak_idx = peaks[np.argmax(np.abs(sub_dv[peaks]))]
+
+                    # Get inflection point values
+                    inflection_voltage = sub_volt[best_peak_idx]
+                    inflection_capacity = sub_cap[best_peak_idx]
+
+                    # Store result
+                    key_prefix = 'charge' if status == 'CC_Chg' else 'discharge'
+                    result[f'{key_prefix}_inflection_voltage'] = float(inflection_voltage)
+                    result[f'{key_prefix}_inflection_capacity'] = float(inflection_capacity)
+
+                    logging.debug(
+                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh")
+                else:
+                    logging.debug(f"No peaks found for {status} in cycle {cycle}")
+
+            except Exception as e:
+                logging.debug(f"Error in peak detection for {status}: {e}")
+                continue
+
+        logging.debug("DQDVAnalysis.find_inflection_point finished")
+        return result if result else None
 
