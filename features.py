@@ -1,5 +1,6 @@
-from common.imports import os, np, pd, logging
+from common.imports import os, np, pd, logging, Path
 from scipy.signal import savgol_filter
+from data_import import extract_cell_id
 
 class Features:
     """
@@ -566,9 +567,6 @@ class DQDVAnalysis:
         Returns:
             List of dictionaries with plateau capacity statistics for GUI display
         """
-        from common.imports import logging, Path
-        from common.project_imports import extract_cell_id
-
         logging.debug("DQDVAnalysis.extract_plateaus_batch started")
 
         # Use default cycles if none provided
@@ -612,7 +610,7 @@ class DQDVAnalysis:
 
                     if plateau_data:
                         # Add file and cycle information
-                        plateau_data["File"] = filename_stem
+                        plateau_data["File"] = cell_ID
                         plateau_data["Cycle"] = cycle
 
                         # Add to statistics

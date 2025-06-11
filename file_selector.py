@@ -545,7 +545,7 @@ class FileSelector:
 
         # Configure column headings with shorter text for better display
         heading_map = {
-            "File": "File",
+            "File": "Cell ID",
             "Cycle": "Cycle",
             "Charge 1st Cap (mAh/g)": "Chg 1st Cap",
             "Charge 1st %": "Chg 1st %",
