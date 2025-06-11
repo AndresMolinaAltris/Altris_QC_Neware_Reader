@@ -55,7 +55,6 @@ class Features:
         :param cycle: Integer representing the cycle number.
         """
         try:
-            #idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 5)
             idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 1)
             index = df[idx].index[-1]
             ocv = round(df["Voltage"][index], 4)

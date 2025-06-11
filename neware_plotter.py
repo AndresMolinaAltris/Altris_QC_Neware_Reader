@@ -51,64 +51,41 @@ class NewarePlotter:
 
         return sample_name
 
-    def preprocess_ndax_file(self, file_path, selected_cycles=None):
+    def preprocess_ndax_file_with_loader(self, data_loader, file_path, selected_cycles=None):
         """
-        Reads an NDAX file and prepares it for plotting, reusing the existing
-        data processing code from the Features class.
+        Updated version of preprocess_ndax_file that uses DataLoader instead of reading files.
 
         Args:
-            file_path (str): Path to the NDAX file
-            selected_cycles (list, optional): List of cycles to process. Defaults to [1, 2, 3].
-        Returns:
-            tuple: (file_name, DataFrame) containing the processed data
-        """
+            data_loader: DataLoader instance with cached data
+            file_path: Path to the NDAX file
+            selected_cycles: List of cycles to process
 
-        logging.debug("NEWARE_PLOTTER.preprocess_ndax_files func started.")
+        Returns:
+            tuple: (filename_stem, processed_data) or (None, None) if failed
+        """
+        logging.debug("NEWARE_PLOTTER.preprocess_ndax_file_with_loader func started.")
 
         # Use default cycles if none provided
         cycles = selected_cycles if selected_cycles else DEFAULT_CYCLES
 
-        try:
-            logging.debug(f"NEWARE_PLOTTER.Processing file for plotting: {file_path}...")
-            # Extract cell ID from the filename
-            filename_stem = os.path.basename(file_path).split(".")[0]
-            cell_id = extract_cell_id(filename_stem)
-
-            # Get active mass from database
-            mass = self.db.get_mass(cell_id)
-            if mass is None:
-                logging.debug(f"NEWARE_PLOTTER.Warning: No mass found for cell ID {cell_id}, using 1.0g")
-                mass = 1.0
-
-            # Read data
-            data = NewareNDA.read(file_path)
-
-            # Filter relevant columns for plotting
-            plot_data = data[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']]
-
-            # Filter data for selected cycles that exist in the data
-            available_cycles = plot_data['Cycle'].unique()
-            valid_cycles = [cycle for cycle in cycles if cycle in available_cycles]
-
-            if not valid_cycles:
-                logging.debug(
-                    f"NEWARE_PLOTTER.Warning: None of the selected cycles {cycles} exist in file {file_path}.")
-                return filename_stem, None
-
-            # Filter to only include valid cycles
-            plot_data = plot_data[plot_data['Cycle'].isin(valid_cycles)]
-
-            # Compute specific capacities
-            plot_data['Specific_Charge_Capacity(mAh/g)'] = plot_data['Charge_Capacity(mAh)'] / mass
-            plot_data['Specific_Discharge_Capacity(mAh/g)'] = plot_data['Discharge_Capacity(mAh)'] / mass
-
-            logging.debug(f"NEWARE_PLOTTER.File processed successfully for plotting: {file_path}")
-
-            return filename_stem, plot_data
-
-        except Exception as e:
-            logging.debug(f"NEWARE_PLOTTER.Error processing file for plotting {file_path}: {e}")
+        # Check if file is loaded
+        if not data_loader.is_loaded(file_path):
+            logging.debug(f"NEWARE_PLOTTER.File not loaded in DataLoader: {os.path.basename(file_path)}")
             return None, None
+
+        # Get cached data
+        df = data_loader.get_data(file_path)
+        if df is None:
+            logging.debug(f"NEWARE_PLOTTER.No data available from DataLoader: {os.path.basename(file_path)}")
+            return None, None
+
+        filename_stem = os.path.basename(file_path).split(".")[0]
+
+        # Prepare plot data
+        plot_data = self._prepare_plot_data_from_dataframe(df, filename_stem, cycles)
+
+        logging.debug("NEWARE_PLOTTER.preprocess_ndax_file_with_loader func finished.")
+        return filename_stem, plot_data
 
     def create_plot(self, files_data, selected_cycles=None, display_plot=False):
         """
@@ -213,92 +190,6 @@ class NewarePlotter:
         if display_plot:
             plt.show()
 
-        return fig
-
-    def plot_ndax_files(self, file_paths, preprocessed_data=None, display_plot=False, gui_callback=None,
-                        selected_cycles=None):
-        """
-        Process multiple NDAX files and create a combined plot.
-
-        Args:
-            file_paths (list): List of paths to NDAX files
-            preprocessed_data (dict, optional): Pre-processed data to use instead of reading files
-            display_plot (bool): Whether to display the plot
-            gui_callback (callable, optional): Function to call with the figure for GUI display
-            selected_cycles (list, optional): List of cycles to plot. Defaults to [1, 2, 3].
-
-        Returns:
-            fig: The matplotlib figure object
-        """
-        logging.debug("NEWARE_PLOTTER.plot_ndax_files func started.")
-
-        # Use default cycles if none provided
-        cycles = selected_cycles if selected_cycles else DEFAULT_CYCLES
-
-        # Process all files
-        files_data = {}
-
-        # If we have preprocessed data, use it
-        if preprocessed_data:
-            logging.debug("NEWARE_PLOTTER.plot_ndax_files using preprocessed data")
-            for file_name, data in preprocessed_data.items():
-                # Filter data for plotting
-                plot_data = data[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']]
-
-                # Filter to include only the selected cycles that exist in this file
-                available_cycles = plot_data['Cycle'].unique()
-                valid_cycles = [cycle for cycle in cycles if cycle in available_cycles]
-
-                if not valid_cycles:
-                    logging.debug(f"NEWARE_PLOTTER.No selected cycles found in file {file_name}, skipping")
-                    files_data[file_name] = None
-                    continue
-
-                plot_data = plot_data[plot_data['Cycle'].isin(valid_cycles)]
-
-                # Get cell ID and mass
-                cell_id = extract_cell_id(file_name)
-                mass = self.db.get_mass(cell_id) or 1.0
-
-                # Compute specific capacities if they don't already exist
-                if 'Specific_Charge_Capacity(mAh/g)' not in plot_data.columns:
-                    plot_data['Specific_Charge_Capacity(mAh/g)'] = plot_data['Charge_Capacity(mAh)'] / mass
-
-                if 'Specific_Discharge_Capacity(mAh/g)' not in plot_data.columns:
-                    plot_data['Specific_Discharge_Capacity(mAh/g)'] = plot_data['Discharge_Capacity(mAh)'] / mass
-
-                logging.debug(f"NEWARE_PLOTTER.Processed cached data for {file_name}")
-                files_data[file_name] = plot_data
-        else:
-            # Process files normally if no preprocessed data
-            logging.debug("NEWARE_PLOTTER.plot_ndax_files no preprocessed data, reading files")
-            for file_path in file_paths:
-                file_name, processed_data = self.preprocess_ndax_file(file_path, selected_cycles=cycles)
-                if processed_data is not None:
-                    logging.debug(f"NEWARE_PLOTTER.Processed file: {file_name}")
-                    files_data[file_name] = processed_data
-                else:
-                    # Include file but with None data to maintain file order
-                    files_data[file_name] = None
-
-        if not any(data is not None for data in files_data.values()):
-            logging.debug("NEWARE_PLOTTER.No valid data to plot.")
-            # Create an empty figure with a message
-            fig = plt.figure(figsize=(15, 5))
-            plt.figtext(0.5, 0.5, "No data available for selected cycles",
-                        ha='center', va='center', fontsize=14)
-            if gui_callback:
-                gui_callback(fig)
-            return fig
-
-        # Create plot
-        fig = self.create_plot(files_data, selected_cycles=cycles, display_plot=display_plot)
-
-        # If a GUI callback was provided, send the figure to it
-        if gui_callback and fig is not None:
-            gui_callback(fig)
-
-        logging.debug("NEWARE_PLOTTER.plot_ndax_files func finished")
         return fig
 
     def plot_ndax_files_with_loader(self, data_loader, file_paths, display_plot=False,
@@ -501,47 +392,6 @@ class NewarePlotter:
 
         return fig
 
-    def plot_dqdv_curves(self, file_paths, dqdv_data=None, display_plot=False, gui_callback=None, selected_cycles=None):
-        """
-        Process multiple NDAX files and create a combined dQ/dV plot.
-
-        Args:
-            file_paths (list): List of paths to NDAX files
-            dqdv_data (dict, optional): Pre-processed dQ/dV data
-            display_plot (bool): Whether to display the plot
-            gui_callback (callable, optional): Function to call with the figure for GUI display
-            selected_cycles (list, optional): List of cycles to plot. Defaults to [1, 2, 3].
-
-        Returns:
-            fig: The matplotlib figure object
-        """
-        logging.debug("NEWARE_PLOTTER.plot_dqdv_curves func started.")
-
-        # Use default cycles if none provided
-        cycles = selected_cycles if selected_cycles else DEFAULT_CYCLES
-
-        # Get all files data first for consistency
-        files_data = {}
-        for file_path in file_paths:
-            file_name, _ = self.preprocess_ndax_file(file_path)
-            if file_name is not None:
-                files_data[file_name] = None  # We just need the file names for plotting
-
-        # If no valid data, exit early
-        if not files_data:
-            logging.debug("NEWARE_PLOTTER.No valid data to plot dQ/dV curves.")
-            return None
-
-        # Create the dQ/dV plot
-        fig = self.create_dqdv_plot(files_data, dqdv_data, selected_cycles=cycles, display_plot=display_plot)
-
-        # If a GUI callback was provided, send the figure to it
-        if gui_callback and fig is not None:
-            gui_callback(fig)
-
-        logging.debug("NEWARE_PLOTTER.plot_dqdv_curves func finished")
-        return fig
-
     def plot_dqdv_curves_with_loader(self, data_loader, file_paths, dqdv_data=None,
                                      display_plot=False, gui_callback=None, selected_cycles=None):
         """
@@ -637,38 +487,3 @@ class NewarePlotter:
             logging.debug(f"NEWARE_PLOTTER.Error preparing plot data for {filename_stem}: {e}")
             return None
 
-    def preprocess_ndax_file_with_loader(self, data_loader, file_path, selected_cycles=None):
-        """
-        Updated version of preprocess_ndax_file that uses DataLoader instead of reading files.
-
-        Args:
-            data_loader: DataLoader instance with cached data
-            file_path: Path to the NDAX file
-            selected_cycles: List of cycles to process
-
-        Returns:
-            tuple: (filename_stem, processed_data) or (None, None) if failed
-        """
-        logging.debug("NEWARE_PLOTTER.preprocess_ndax_file_with_loader func started.")
-
-        # Use default cycles if none provided
-        cycles = selected_cycles if selected_cycles else DEFAULT_CYCLES
-
-        # Check if file is loaded
-        if not data_loader.is_loaded(file_path):
-            logging.debug(f"NEWARE_PLOTTER.File not loaded in DataLoader: {os.path.basename(file_path)}")
-            return None, None
-
-        # Get cached data
-        df = data_loader.get_data(file_path)
-        if df is None:
-            logging.debug(f"NEWARE_PLOTTER.No data available from DataLoader: {os.path.basename(file_path)}")
-            return None, None
-
-        filename_stem = os.path.basename(file_path).split(".")[0]
-
-        # Prepare plot data
-        plot_data = self._prepare_plot_data_from_dataframe(df, filename_stem, cycles)
-
-        logging.debug("NEWARE_PLOTTER.preprocess_ndax_file_with_loader func finished.")
-        return filename_stem, plot_data
