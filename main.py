@@ -1,5 +1,5 @@
 import sys
-from common.imports import os, logging, Path, time, yaml, pd, plt, NewareNDA, traceback
+from common.imports import os, logging, Path, time, yaml, pd, plt, traceback
 from common.project_imports import (
     extract_cell_id, extract_sample_name, Features, DQDVAnalysis,
     CellDatabase, NewarePlotter, FileSelector,
@@ -7,7 +7,6 @@ from common.project_imports import (
 )
 
 sys.path.append(str(Path(__file__).parent))
-
 
 # Define the path where all the python files are located. This is the directory where the logging
 # will be saved

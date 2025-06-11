@@ -1,7 +1,9 @@
 from common.imports import (
-    tk, filedialog, ttk, messagebox, os, pd, NewareNDA,
+    tk, filedialog, ttk, messagebox, os, pd,
     logging, FigureCanvasTkAgg, Figure, plt
 )
+#from common.project_imports import DataLoader
+from data_loader import DataLoader # For some reason I cannot import this from common imports
 
 class CycleSelectionDialog(tk.Toplevel):
     """Dialog for selecting which cycles to display in plots and analysis."""
@@ -1089,10 +1091,9 @@ class FileSelector:
 
     def _export_raw_data(self):
         """
-        Export raw data from selected NDAX files directly to Excel.
+        Export raw data from selected NDAX files directly to Excel using DataLoader.
         Allows user to choose the export directory.
-        Uses NewareNDA.read() to read files and exports with the same base name.
-        Handles multiple file exports.
+        Uses DataLoader for efficient batch file reading with error handling.
         """
         if not self.selected_files:
             messagebox.showwarning(
@@ -1114,7 +1115,7 @@ class FileSelector:
         # Create a progress bar for user feedback
         progress_window = tk.Toplevel(self.root)
         progress_window.title("Exporting Raw Data")
-        progress_window.geometry("400x100")
+        progress_window.geometry("400x120")
         progress_window.transient(self.root)  # Set as transient to main window
         progress_window.grab_set()  # Make modal
 
@@ -1122,67 +1123,137 @@ class FileSelector:
         progress_window.columnconfigure(0, weight=1)
         progress_window.rowconfigure(0, weight=0)
         progress_window.rowconfigure(1, weight=0)
+        progress_window.rowconfigure(2, weight=0)
 
         # Add status label
-        status_label = ttk.Label(progress_window, text="Preparing to export files...")
+        status_label = ttk.Label(progress_window, text="Loading files with DataLoader...")
         status_label.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
 
         # Add progress bar
         progress_bar = ttk.Progressbar(progress_window, mode="determinate", length=380)
         progress_bar.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
 
+        # Add details label for cache info
+        details_label = ttk.Label(progress_window, text="", font=('', 8))
+        details_label.grid(row=2, column=0, sticky="ew", padx=10, pady=2)
+
         # Create a copy of selected files
         files_to_export = self.selected_files.copy()
         total_files = len(files_to_export)
-        files_exported = 0
-        failed_files = []
 
         # Update progress bar max value
-        progress_bar["maximum"] = total_files
+        progress_bar["maximum"] = total_files + 1  # +1 for loading phase
         progress_bar["value"] = 0
         progress_window.update()
 
-        # Process each file
-        for file_path in files_to_export:
-            try:
-                # Update status message
-                file_name = os.path.basename(file_path)
-                status_label.config(text=f"Exporting {file_name}... ({files_exported + 1}/{total_files})")
-                progress_window.update()
+        try:
+            # Initialize DataLoader and load all files at once
+            logging.debug("FILE_SELECTOR._export_raw_data: Initializing DataLoader")
+            data_loader = DataLoader()
 
-                # Read the NDAX file
-                df = NewareNDA.read(file_path)
+            # Load all files
+            status_label.config(text="Loading all NDAX files...")
+            progress_window.update()
 
-                # Generate output file path with same name but .xlsx extension in the chosen directory
-                output_path = os.path.join(export_dir, os.path.splitext(file_name)[0] + ".xlsx")
+            data_loader.load_files(files_to_export)
 
-                # Export to Excel
-                df.to_excel(output_path, index=False)
+            # Update progress for loading phase
+            progress_bar["value"] = 1
 
-                # Update progress
-                files_exported += 1
-                progress_bar["value"] = files_exported
-                progress_window.update()
+            # Get cache info for user feedback
+            cache_info = data_loader.get_cache_info()
+            details_label.config(text=f"Loaded {cache_info['cached_files']} files "
+                                      f"({cache_info['memory_usage_mb']:.1f} MB)")
+            progress_window.update()
 
-            except Exception as e:
-                logging.debug(f"FILE_SELECTOR. Error exporting raw data for {file_path}: {e}")
-                failed_files.append(file_name)
+            # Log cache information
+            logging.debug(f"FILE_SELECTOR._export_raw_data: DataLoader cache: "
+                          f"{cache_info['cached_files']} files, "
+                          f"{cache_info['total_rows']} total rows, "
+                          f"{cache_info['memory_usage_mb']:.1f} MB")
+
+            # Check for failed files
+            failed_files = data_loader.get_failed_files()
+            if failed_files:
+                failed_names = [os.path.basename(f) for f in failed_files]
+                logging.warning(f"FILE_SELECTOR._export_raw_data: Failed to load files: {failed_names}")
+
+            # Export each successfully loaded file
+            files_exported = 0
+            export_errors = []
+
+            for file_path in files_to_export:
+                try:
+                    file_name = os.path.basename(file_path)
+
+                    # Skip files that failed to load
+                    if not data_loader.is_loaded(file_path):
+                        logging.debug(f"FILE_SELECTOR._export_raw_data: Skipping unloaded file: {file_name}")
+                        export_errors.append(f"{file_name} (failed to load)")
+                        continue
+
+                    # Update status message
+                    status_label.config(text=f"Exporting {file_name}... ({files_exported + 1}/{total_files})")
+                    progress_window.update()
+
+                    # Get the data from DataLoader cache
+                    df = data_loader.get_data(file_path)
+
+                    if df is None:
+                        export_errors.append(f"{file_name} (no data available)")
+                        continue
+
+                    # Generate output file path with same name but .xlsx extension
+                    output_path = os.path.join(export_dir, os.path.splitext(file_name)[0] + ".xlsx")
+
+                    # Export to Excel
+                    df.to_excel(output_path, index=False)
+
+                    logging.debug(f"FILE_SELECTOR._export_raw_data: Exported {file_name} "
+                                  f"with {len(df)} rows to {output_path}")
+
+                    # Update progress
+                    files_exported += 1
+                    progress_bar["value"] = files_exported + 1  # +1 for loading phase
+                    progress_window.update()
+
+                except Exception as e:
+                    logging.error(f"FILE_SELECTOR._export_raw_data: Error exporting {file_path}: {e}")
+                    export_errors.append(f"{os.path.basename(file_path)} (export error: {str(e)})")
+
+            # Clean up DataLoader
+            data_loader.clear_cache()
+            logging.debug("FILE_SELECTOR._export_raw_data: DataLoader cache cleared")
+
+        except Exception as e:
+            logging.error(f"FILE_SELECTOR._export_raw_data: DataLoader initialization failed: {e}")
+            progress_window.destroy()
+            messagebox.showerror("Export Failed", f"Failed to initialize data loading: {str(e)}")
+            return
 
         # Close progress window
         progress_window.destroy()
 
         # Show completion message
-        if failed_files:
+        if export_errors:
+            error_details = "\n".join(export_errors[:5])  # Show first 5 errors
+            if len(export_errors) > 5:
+                error_details += f"\n... and {len(export_errors) - 5} more errors"
+
             messagebox.showwarning(
                 "Export Completed With Errors",
                 f"Exported {files_exported} of {total_files} files to {export_dir}.\n\n"
-                f"Failed to export: {', '.join(failed_files)}"
+                f"Issues encountered:\n{error_details}"
             )
         else:
             messagebox.showinfo(
                 "Export Completed",
-                f"Successfully exported raw data for {files_exported} files to:\n{export_dir}"
+                f"Successfully exported raw data for {files_exported} files to:\n{export_dir}\n\n"
+                f"Performance: Files loaded once and cached for efficient export."
             )
+
+        logging.debug(f"FILE_SELECTOR._export_raw_data: Export completed. "
+                      f"Success: {files_exported}, Errors: {len(export_errors)}")
 
     def _export_analysis_table(self, table=None, file_prefix=None):
         """
