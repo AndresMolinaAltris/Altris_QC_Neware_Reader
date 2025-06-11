@@ -532,8 +532,12 @@ class FileSelector:
         # Create columns for the table
         columns = [
             "File", "Cycle",
-            "Charge 1st Plateau (mAh/g)", "Charge 2nd Plateau (mAh/g)", "Charge Total (mAh/g)",
-            "Discharge 1st Plateau (mAh/g)", "Discharge 2nd Plateau (mAh/g)", "Discharge Total (mAh/g)"
+            "Charge 1st Cap (mAh/g)", "Charge 1st %",
+            "Charge 2nd Cap (mAh/g)", "Charge 2nd %",
+            "Charge Total (mAh/g)",
+            "Discharge 1st Cap (mAh/g)", "Discharge 1st %",
+            "Discharge 2nd Cap (mAh/g)", "Discharge 2nd %",
+            "Discharge Total (mAh/g)"
         ]
 
         # Create the table
@@ -543,12 +547,16 @@ class FileSelector:
         heading_map = {
             "File": "File",
             "Cycle": "Cycle",
-            "Charge 1st Plateau (mAh/g)": "Chg 1st (mAh/g)",
-            "Charge 2nd Plateau (mAh/g)": "Chg 2nd (mAh/g)",
-            "Charge Total (mAh/g)": "Chg Total (mAh/g)",
-            "Discharge 1st Plateau (mAh/g)": "Dchg 1st (mAh/g)",
-            "Discharge 2nd Plateau (mAh/g)": "Dchg 2nd (mAh/g)",
-            "Discharge Total (mAh/g)": "Dchg Total (mAh/g)"
+            "Charge 1st Cap (mAh/g)": "Chg 1st Cap",
+            "Charge 1st %": "Chg 1st %",
+            "Charge 2nd Cap (mAh/g)": "Chg 2nd Cap",
+            "Charge 2nd %": "Chg 2nd %",
+            "Charge Total (mAh/g)": "Chg Total",
+            "Discharge 1st Cap (mAh/g)": "Dchg 1st Cap",
+            "Discharge 1st %": "Dchg 1st %",
+            "Discharge 2nd Cap (mAh/g)": "Dchg 2nd Cap",
+            "Discharge 2nd %": "Dchg 2nd %",
+            "Discharge Total (mAh/g)": "Dchg Total"
         }
 
         # Configure column headings and widths
@@ -1010,11 +1018,15 @@ class FileSelector:
                 formatted_values = [
                     stat.get('File', ''),
                     stat.get('Cycle', ''),
-                    f"{charge_1st:.1f} ({charge_1st_pct:.1f}%)",
-                    f"{charge_2nd:.1f} ({charge_2nd_pct:.1f}%)",
+                    f"{charge_1st:.1f}",
+                    f"{charge_1st_pct:.1f}",
+                    f"{charge_2nd:.1f}",
+                    f"{charge_2nd_pct:.1f}",
                     f"{charge_total:.1f}",
-                    f"{discharge_1st:.1f} ({discharge_1st_pct:.1f}%)",
-                    f"{discharge_2nd:.1f} ({discharge_2nd_pct:.1f}%)",
+                    f"{discharge_1st:.1f}",
+                    f"{discharge_1st_pct:.1f}",
+                    f"{discharge_2nd:.1f}",
+                    f"{discharge_2nd_pct:.1f}",
                     f"{discharge_total:.1f}"
                 ]
 
