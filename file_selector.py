@@ -998,8 +998,11 @@ class FileSelector:
             for item in self.dqdv_stats_table.get_children():
                 self.dqdv_stats_table.delete(item)
 
-            # Add new plateau statistics
-            for stat in dqdv_stats:
+            # Sort by cycle first, then by file for better comparison
+            dqdv_stats_sorted = sorted(dqdv_stats, key=lambda x: (x.get('Cycle', 0), x.get('File', '')))
+
+            # Add plateau statistics
+            for stat in dqdv_stats_sorted:
                 # Get capacity values
                 charge_1st = stat.get('Charge 1st Plateau (mAh/g)', 0)
                 charge_2nd = stat.get('Charge 2nd Plateau (mAh/g)', 0)
