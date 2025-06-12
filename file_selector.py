@@ -594,7 +594,7 @@ class FileSelector:
             command=self._copy_dqdv_table_to_clipboard
         ).grid(row=0, column=1, sticky="e", padx=5, pady=5)
 
-        # Export button (existing)
+        # Export button
         ttk.Button(
             export_frame,
             text="Export Table",
