@@ -65,7 +65,7 @@ class CycleSelectionDialog(tk.Toplevel):
 
             # Dropdown with values 1-10
             dropdown = ttk.Combobox(row_frame, textvariable=var, width=5)
-            dropdown['values'] = list(range(1, 16))  # Cycles 1-10
+            dropdown['values'] = list(range(1, 11))  # Cycles 1-10
             dropdown.pack(side=tk.LEFT)
 
         # Button frame
@@ -405,26 +405,15 @@ class FileSelector:
         )
         explanation.pack(pady=10, before=table_frame)
 
-        # Add export button frame (replace the existing export_frame section)
+        # Add export button
         export_frame = ttk.Frame(self.analysis_tab)
         export_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        # Configure the export frame to push buttons to the right
-        export_frame.columnconfigure(0, weight=1)
-
-        # Copy button
-        ttk.Button(
-            export_frame,
-            text="Copy Table",
-            command=self._copy_analysis_table_to_clipboard
-        ).grid(row=0, column=1, sticky="e", padx=5, pady=5)
-
-        # Export button
         ttk.Button(
             export_frame,
             text="Export Table",
             command=self._export_analysis_table
-        ).grid(row=0, column=2, sticky="e", padx=5, pady=5)
+        ).pack(side=tk.RIGHT)
 
     def _update_table_columns(self):
         """Update the table columns based on the current selected cycles"""
@@ -605,7 +594,7 @@ class FileSelector:
             command=self._copy_dqdv_table_to_clipboard
         ).grid(row=0, column=1, sticky="e", padx=5, pady=5)
 
-        # Export button
+        # Export button (existing)
         ttk.Button(
             export_frame,
             text="Export Table",
@@ -1295,38 +1284,22 @@ class FileSelector:
         """
         Copy the dQ/dV statistics table data to clipboard in tab-separated format.
         """
-        self._copy_table_to_clipboard(self.dqdv_stats_table, "dQ/dV statistics table")
-
-    def _copy_analysis_table_to_clipboard(self):
-        """
-        Copy the analysis table data to clipboard in tab-separated format.
-        """
-        self._copy_table_to_clipboard(self.analysis_table, "analysis table")
-
-    def _copy_table_to_clipboard(self, table, table_name="Table"):
-        """
-        Generic method to copy any ttk.Treeview table data to clipboard in tab-separated format.
-
-        Args:
-            table: The ttk.Treeview widget to copy
-            table_name: Name of the table for user feedback messages
-        """
         try:
             # Check if the table has data
-            if not table.get_children():
-                messagebox.showinfo("Copy Table", f"No data to copy from {table_name}.")
+            if not self.dqdv_stats_table.get_children():
+                messagebox.showinfo("Copy Table", "No data to copy.")
                 return
 
             # Get column headers
-            columns = table["columns"]
+            columns = self.dqdv_stats_table["columns"]
 
             # Create header row
             header_row = "\t".join(columns)
 
             # Get all data rows
             data_rows = []
-            for item_id in table.get_children():
-                item_values = table.item(item_id)["values"]
+            for item_id in self.dqdv_stats_table.get_children():
+                item_values = self.dqdv_stats_table.item(item_id)["values"]
                 # Convert all values to strings and join with tabs
                 row_data = "\t".join(str(value) for value in item_values)
                 data_rows.append(row_data)
@@ -1340,9 +1313,9 @@ class FileSelector:
             self.root.update()  # Ensure clipboard is updated
 
             # Show confirmation
-            messagebox.showinfo("Copy Successful", f"Copied {len(data_rows)} rows from {table_name} to clipboard.")
-            logging.debug(f"FILE_SELECTOR. {table_name} data copied to clipboard: {len(data_rows)} rows")
+            messagebox.showinfo("Copy Successful", f"Copied {len(data_rows)} rows to clipboard.")
+            logging.debug(f"FILE_SELECTOR. dQ/dV table data copied to clipboard: {len(data_rows)} rows")
 
         except Exception as e:
             messagebox.showerror("Copy Failed", f"An error occurred: {str(e)}")
-            logging.debug(f"FILE_SELECTOR. Error copying {table_name} data: {e}")
+            logging.debug(f"FILE_SELECTOR. Error copying dQ/dV table data: {e}")
