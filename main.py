@@ -193,6 +193,11 @@ def process_files(ndax_file_list,
                             logging.debug("MAIN.Calling update_dqdv_plot method")
                             gui_callback.__self__.update_dqdv_plot(dqdv_fig, plateau_stats)
                             logging.debug("MAIN.update_dqdv_plot method call completed")
+
+                            # Store dqdv_stats for complete analysis tab
+                            if hasattr(gui_callback.__self__, '_store_dqdv_stats'):
+                                logging.debug("MAIN.Storing dqdv_stats for complete analysis tab")
+                                gui_callback.__self__._store_dqdv_stats(plateau_stats)
                         except Exception as e:
                             logging.debug(f"MAIN.Error in update_dqdv_plot: {e}")
                             logging.debug(traceback.format_exc())
