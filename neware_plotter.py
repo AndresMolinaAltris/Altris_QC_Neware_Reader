@@ -342,7 +342,7 @@ class NewarePlotter:
                         discharge_data = cycle_dqdv['discharge']
                         discharge_dqdv = -abs(discharge_data['smoothed_dqdv'])
                         ax.plot(discharge_data['voltage'], discharge_dqdv,
-                                linestyle=self.line_styles[1], color=color,
+                                linestyle=self.line_styles[0], color=color,
                                 label=f"{legend_name} (Discharge)")
 
                     # Add to legend handles
@@ -357,7 +357,8 @@ class NewarePlotter:
 
             # Set axis limits if we have data
             if has_data_for_cycle:
-                ax.set_xlim(2.75, 3.75)
+                #ax.set_xlim(2.75, 3.75)
+                ax.set_xlim(2.8, 3.6)
                 # Ensure we don't have zero division issues
                 if max_charge_dqdv > 0 or min_discharge_dqdv < 0:
                     max_y = max(0.1, max_charge_dqdv * 1.1)  # Always at least 0.1 for non-zero scale
