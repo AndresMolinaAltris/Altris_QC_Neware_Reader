@@ -159,6 +159,8 @@ def process_files(ndax_file_list,
 
                 # Generate dQ/dV plots
                 logging.debug("MAIN.Generating dQ/dV plots...")
+                # Store voltage range in plotter for transition voltage extraction
+                plotter._gui_voltage_range = voltage_range
                 dqdv_fig = plotter.plot_dqdv_curves_with_loader(
                     data_loader,
                     ndax_file_list,

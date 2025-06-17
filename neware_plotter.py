@@ -345,6 +345,9 @@ class NewarePlotter:
                                 linestyle=self.line_styles[0], color=color,
                                 label=f"{legend_name} (Discharge)")
 
+                    # ADD NEW: Plot transition voltage markers
+                    self._add_transition_markers(ax, file_name, cycle, color)
+
                     # Add to legend handles
                     if legend_name not in legend_handles:
                         legend_handles[legend_name] = ax.plot([], [], color=color, label=legend_name)[0]
@@ -357,7 +360,6 @@ class NewarePlotter:
 
             # Set axis limits if we have data
             if has_data_for_cycle:
-                #ax.set_xlim(2.75, 3.75)
                 ax.set_xlim(2.8, 3.6)
                 # Ensure we don't have zero division issues
                 if max_charge_dqdv > 0 or min_discharge_dqdv < 0:
@@ -428,6 +430,12 @@ class NewarePlotter:
             logging.debug("NEWARE_PLOTTER.No valid data to plot dQ/dV curves.")
             return None
 
+        # NEW: Generate transition voltage data directly here instead of relying on GUI callback
+        self._transition_voltages = self._extract_transition_voltages_from_dqdv_data(
+            data_loader, file_paths, cycles
+        )
+        logging.debug(f"Generated {len(self._transition_voltages)} transition voltage entries for markers")
+
         # Create the dQ/dV plot
         fig = self.create_dqdv_plot(files_data, dqdv_data, selected_cycles=cycles, display_plot=display_plot)
 
@@ -486,5 +494,167 @@ class NewarePlotter:
 
         except Exception as e:
             logging.debug(f"NEWARE_PLOTTER.Error preparing plot data for {filename_stem}: {e}")
+            return None
+
+    def _add_transition_markers(self, ax, file_name, cycle, color):
+        """
+        Add small point markers at transition voltages on dQ/dV plots.
+
+        Args:
+            ax: The matplotlib axis to plot on
+            file_name: Name of the file being plotted
+            cycle: Current cycle number
+            color: Color to use for the markers (same as curve color)
+        """
+        # Get transition voltages from the stored dqdv stats
+        if not hasattr(self, '_transition_voltages') or not self._transition_voltages:
+            logging.debug(f"No transition voltage data available for markers")
+            return
+
+        # Extract legend name for comparison
+        legend_name = self.extract_legend_name(file_name)
+
+        # Look for transition voltage data for this file and cycle
+        transition_data = None
+        for stat in self._transition_voltages:
+            if stat.get('File') == legend_name and stat.get('Cycle') == cycle:
+                transition_data = stat
+                break
+
+        if not transition_data:
+            logging.debug(f"No transition data found for {legend_name}, cycle {cycle}")
+            return
+
+        logging.debug(f"Found transition data for {legend_name}, cycle {cycle}: {transition_data}")
+
+        # Get the actual dQ/dV data from the plot lines to interpolate marker positions
+        lines = ax.get_lines()
+
+        # Add charge transition marker if available
+        charge_transition = transition_data.get('Charge Transition Voltage (V)')
+        if charge_transition is not None and charge_transition > 0:
+            # Find the charge curve (positive dQ/dV values)
+            charge_line = None
+            for line in lines:
+                line_data = line.get_ydata()
+                if len(line_data) > 0 and any(y > 0 for y in line_data):  # Positive values = charge
+                    charge_line = line
+                    break
+
+            if charge_line is not None:
+                x_data = charge_line.get_xdata()
+                y_data = charge_line.get_ydata()
+
+                # Interpolate dQ/dV value at transition voltage
+                marker_y = self._interpolate_at_voltage(x_data, y_data, charge_transition)
+                if marker_y is not None:
+                    ax.plot(charge_transition, marker_y, marker='o', color=color, markersize=3, zorder=10)
+                    logging.debug(f"Added charge transition marker at {charge_transition}V, {marker_y:.2f} dQ/dV")
+
+        # Add discharge transition marker if available
+        discharge_transition = transition_data.get('Discharge Transition Voltage (V)')
+        if discharge_transition is not None and discharge_transition > 0:
+            # Find the discharge curve (negative dQ/dV values)
+            discharge_line = None
+            for line in lines:
+                line_data = line.get_ydata()
+                if len(line_data) > 0 and any(y < 0 for y in line_data):  # Negative values = discharge
+                    discharge_line = line
+                    break
+
+            if discharge_line is not None:
+                x_data = discharge_line.get_xdata()
+                y_data = discharge_line.get_ydata()
+
+                # Interpolate dQ/dV value at transition voltage
+                marker_y = self._interpolate_at_voltage(x_data, y_data, discharge_transition)
+                if marker_y is not None:
+                    ax.plot(discharge_transition, marker_y, marker='o', color=color, markersize=3, zorder=10)
+                    logging.debug(f"Added discharge transition marker at {discharge_transition}V, {marker_y:.2f} dQ/dV")
+
+    def _extract_transition_voltages_from_dqdv_data(self, data_loader, file_paths, cycles):
+        """
+        Extract transition voltage data directly from the data loader for marker plotting.
+
+        Args:
+            data_loader: DataLoader instance with cached data
+            file_paths: List of file paths to process
+            cycles: List of cycles to process
+
+        Returns:
+            List of dictionaries with transition voltage data
+        """
+        from common.project_imports import DQDVAnalysis, extract_cell_id
+
+        transition_data = []
+
+        for file_path in file_paths:
+            if not data_loader.is_loaded(file_path):
+                continue
+
+            filename_stem = os.path.basename(file_path).split(".")[0]
+            df = data_loader.get_data(file_path)
+
+            if df is None:
+                continue
+
+            # Get cell ID and mass
+            cell_ID = extract_cell_id(filename_stem)
+            mass = self.db.get_mass(cell_ID)
+
+            if mass is None or mass <= 0:
+                mass = 1.0
+
+            # Create DQDVAnalysis instance
+            dqdv_analyzer = DQDVAnalysis("transition_extractor")
+
+            # Extract transition voltages for each cycle
+            for cycle in cycles:
+                if cycle not in df['Cycle'].unique():
+                    continue
+
+                try:
+                    # Get voltage range from GUI if available
+                    voltage_range = (2.5, 3.5)  # Default
+                    if hasattr(self, '_gui_voltage_range'):
+                        voltage_range = self._gui_voltage_range
+
+                    # Extract plateau data which includes transition voltages
+                    plateau_data = dqdv_analyzer.extract_plateaus(df, cycle, mass, voltage_range=voltage_range)
+
+                    if plateau_data:
+                        plateau_data["File"] = cell_ID
+                        plateau_data["Cycle"] = cycle
+                        transition_data.append(plateau_data)
+
+                except Exception as e:
+                    logging.debug(f"Error extracting transition voltages for {filename_stem}, cycle {cycle}: {e}")
+
+        return transition_data
+
+    def _interpolate_at_voltage(self, x_data, y_data, target_voltage):
+        """
+        Interpolate the dQ/dV value at a specific voltage from curve data.
+
+        Args:
+            x_data: Voltage data from the curve
+            y_data: dQ/dV data from the curve
+            target_voltage: Voltage where we want to interpolate
+
+        Returns:
+            Interpolated dQ/dV value or None if outside range
+        """
+        import numpy as np
+
+        # Check if target voltage is within the data range
+        if target_voltage < min(x_data) or target_voltage > max(x_data):
+            return None
+
+        # Use numpy interpolation
+        try:
+            interpolated_y = np.interp(target_voltage, x_data, y_data)
+            return interpolated_y
+        except Exception as e:
+            logging.debug(f"Error interpolating at voltage {target_voltage}: {e}")
             return None
 
