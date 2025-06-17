@@ -187,12 +187,16 @@ class FileSelector:
         self.analysis_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.analysis_tab, text="Specific capacity results")
 
-        # For now, just add a label to the second tab
+        # Adding a label to the second tab
         ttk.Label(self.analysis_tab, text="Analysis will appear here after processing files.").pack(padx=20, pady=20)
 
         # Create the differential capacity tab
         self.dqdv_tab = self._create_dqdv_tab()
         self.notebook.add(self.dqdv_tab, text="Differential Capacity")
+
+        # Create the complete analysis tab
+        self.complete_tab = self._create_complete_analysis_tab()
+        self.notebook.add(self.complete_tab, text="Complete Analysis")
 
         # Move existing components into the first tab
         # Create file lists frame in the plot tab
@@ -246,6 +250,324 @@ class FileSelector:
         if not process_callback:
             return self.selected_files
         return None
+
+    def _create_complete_analysis_tab(self):
+        """Create the Complete Analysis tab with consolidated metrics."""
+        complete_tab = ttk.Frame(self.notebook)
+
+        # Configure grid
+        complete_tab.columnconfigure(0, weight=1)
+        complete_tab.rowconfigure(0, weight=0)  # Explanation
+        complete_tab.rowconfigure(1, weight=1)  # Table
+        complete_tab.rowconfigure(2, weight=0)  # Export buttons
+
+        # Add explanation
+        explanation = ttk.Label(
+            complete_tab,
+            text="This tab displays all extracted metrics in one consolidated table.\n"
+                 "Statistics are calculated separately for each cycle.",
+            justify=tk.CENTER
+        )
+        explanation.grid(row=0, column=0, pady=10)
+
+        # Create table frame
+        table_frame = ttk.Frame(complete_tab)
+        table_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        # Define complete metrics columns in grouped order
+        self.complete_columns = [
+            "Cell ID", "Cycle",
+            # Capacity Metrics
+            "Charge Cap (mAh)", "Discharge Cap (mAh)",
+            "Specific Charge Cap (mAh/g)", "Specific Discharge Cap (mAh/g)",
+            "Coulombic Eff (%)",
+            # Internal Resistance
+            "IR@SOC0 (Ohms)", "IR@SOC100 (Ohms)",
+            # Plateau Analysis
+            "Chg 1st Plateau (mAh/g)", "Chg 1st %",
+            "Chg 2nd Plateau (mAh/g)", "Chg 2nd %",
+            "Chg Total (mAh/g)", "Chg Transition (V)",
+            "Dchg 1st Plateau (mAh/g)", "Dchg 1st %",
+            "Dchg 2nd Plateau (mAh/g)", "Dchg 2nd %",
+            "Dchg Total (mAh/g)", "Dchg Transition (V)"
+        ]
+
+        # Create the table
+        self.complete_table = ttk.Treeview(table_frame, columns=self.complete_columns, show="headings")
+
+        # Configure column headings and widths
+        column_widths = {
+            "Cell ID": 80, "Cycle": 60,
+            "Charge Cap (mAh)": 100, "Discharge Cap (mAh)": 100,
+            "Specific Charge Cap (mAh/g)": 120, "Specific Discharge Cap (mAh/g)": 120,
+            "Coulombic Eff (%)": 100,
+            "IR@SOC0 (Ohms)": 100, "IR@SOC100 (Ohms)": 100,
+            "Chg 1st Plateau (mAh/g)": 120, "Chg 1st %": 80,
+            "Chg 2nd Plateau (mAh/g)": 120, "Chg 2nd %": 80,
+            "Chg Total (mAh/g)": 100, "Chg Transition (V)": 100,
+            "Dchg 1st Plateau (mAh/g)": 120, "Dchg 1st %": 80,
+            "Dchg 2nd Plateau (mAh/g)": 120, "Dchg 2nd %": 80,
+            "Dchg Total (mAh/g)": 100, "Dchg Transition (V)": 100
+        }
+
+        for col in self.complete_columns:
+            self.complete_table.heading(col, text=col)
+            self.complete_table.column(col, width=column_widths[col], anchor="center")
+
+        # Add scrollbars
+        y_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.complete_table.yview)
+        x_scrollbar = ttk.Scrollbar(table_frame, orient="horizontal", command=self.complete_table.xview)
+        self.complete_table.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
+
+        # Place table and scrollbars
+        self.complete_table.grid(row=0, column=0, sticky="nsew")
+        y_scrollbar.grid(row=0, column=1, sticky="ns")
+        x_scrollbar.grid(row=1, column=0, sticky="ew")
+
+        # Add export button frame
+        export_frame = ttk.Frame(complete_tab)
+        export_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        export_frame.columnconfigure(0, weight=1)
+
+        # Copy and Export buttons
+        ttk.Button(
+            export_frame,
+            text="Copy Table",
+            command=self._copy_complete_table_to_clipboard
+        ).grid(row=0, column=1, sticky="e", padx=5, pady=5)
+
+        ttk.Button(
+            export_frame,
+            text="Export Table",
+            command=lambda: self._export_analysis_table(self.complete_table, "complete_analysis")
+        ).grid(row=0, column=2, sticky="e", padx=5, pady=5)
+
+        return complete_tab
+
+    def _consolidate_all_metrics(self, features_df, dqdv_stats):
+        """
+        Consolidate all metrics from features_df and dqdv_stats into a single dataset.
+
+        Args:
+            features_df: DataFrame with basic capacity and resistance metrics
+            dqdv_stats: List of dictionaries with plateau analysis metrics
+
+        Returns:
+            List of dictionaries with all consolidated metrics
+        """
+        if features_df is None or features_df.empty:
+            return []
+
+        # Convert dqdv_stats to a dictionary for easy lookup
+        dqdv_dict = {}
+        if dqdv_stats:
+            for stat in dqdv_stats:
+                file_key = stat.get('File', '')
+                cycle_key = stat.get('Cycle', '')
+                key = (file_key, cycle_key)
+                dqdv_dict[key] = stat
+
+        consolidated_data = []
+
+        # Process each row in features_df
+        for _, row in features_df.iterrows():
+            cell_id = row.get('cell ID', '')
+            cycle = row.get('Cycle', '')
+            lookup_key = (cell_id, cycle)
+
+            # Get corresponding dqdv data
+            dqdv_data = dqdv_dict.get(lookup_key, {})
+
+            # Get plateau values for percentage calculations
+            charge_1st = dqdv_data.get('Charge 1st Plateau (mAh/g)', 0) if dqdv_data else 0
+            charge_2nd = dqdv_data.get('Charge 2nd Plateau (mAh/g)', 0) if dqdv_data else 0
+            charge_total = dqdv_data.get('Charge Total (mAh/g)', 0) if dqdv_data else 0
+            discharge_1st = dqdv_data.get('Discharge 1st Plateau (mAh/g)', 0) if dqdv_data else 0
+            discharge_2nd = dqdv_data.get('Discharge 2nd Plateau (mAh/g)', 0) if dqdv_data else 0
+            discharge_total = dqdv_data.get('Discharge Total (mAh/g)', 0) if dqdv_data else 0
+
+            # Calculate percentages (handle division by zero)
+            charge_1st_pct = (charge_1st / charge_total * 100) if charge_total != 0 else 0
+            charge_2nd_pct = (charge_2nd / charge_total * 100) if charge_total != 0 else 0
+            discharge_1st_pct = (discharge_1st / discharge_total * 100) if discharge_total != 0 else 0
+            discharge_2nd_pct = (discharge_2nd / discharge_total * 100) if discharge_total != 0 else 0
+
+            # Format values with appropriate decimal places
+            consolidated_row = {
+                "Cell ID": cell_id,
+                "Cycle": cycle,
+                # Capacity metrics (1 decimal)
+                "Charge Cap (mAh)": f"{float(row.get('Charge Capacity (mAh)', 0)):.1f}" if pd.notnull(
+                    row.get('Charge Capacity (mAh)')) else "N/A",
+                "Discharge Cap (mAh)": f"{float(row.get('Discharge Capacity (mAh)', 0)):.1f}" if pd.notnull(
+                    row.get('Discharge Capacity (mAh)')) else "N/A",
+                "Specific Charge Cap (mAh/g)": f"{float(row.get('Specific Charge Capacity (mAh/g)', 0)):.1f}" if pd.notnull(
+                    row.get('Specific Charge Capacity (mAh/g)')) else "N/A",
+                "Specific Discharge Cap (mAh/g)": f"{float(row.get('Specific Discharge Capacity (mAh/g)', 0)):.1f}" if pd.notnull(
+                    row.get('Specific Discharge Capacity (mAh/g)')) else "N/A",
+                "Coulombic Eff (%)": f"{float(row.get('Coulombic Efficiency (%)', 0)):.1f}" if pd.notnull(
+                    row.get('Coulombic Efficiency (%)')) else "N/A",
+                # Internal resistance (3 decimals)
+                "IR@SOC0 (Ohms)": f"{float(row.get('Internal Resistance at SOC 0 (Ohms)', 0)):.3f}" if pd.notnull(
+                    row.get('Internal Resistance at SOC 0 (Ohms)')) else "N/A",
+                "IR@SOC100 (Ohms)": f"{float(row.get('Internal Resistance at SOC 100 (Ohms)', 0)):.3f}" if pd.notnull(
+                    row.get('Internal Resistance at SOC 100 (Ohms)')) else "N/A",
+                # Plateau analysis with percentages (1 decimal for capacities and percentages, 3 for voltages)
+                "Chg 1st Plateau (mAh/g)": f"{charge_1st:.1f}" if dqdv_data.get(
+                    'Charge 1st Plateau (mAh/g)') is not None else "N/A",
+                "Chg 1st %": f"{charge_1st_pct:.1f}" if dqdv_data.get(
+                    'Charge 1st Plateau (mAh/g)') is not None else "N/A",
+                "Chg 2nd Plateau (mAh/g)": f"{charge_2nd:.1f}" if dqdv_data.get(
+                    'Charge 2nd Plateau (mAh/g)') is not None else "N/A",
+                "Chg 2nd %": f"{charge_2nd_pct:.1f}" if dqdv_data.get(
+                    'Charge 2nd Plateau (mAh/g)') is not None else "N/A",
+                "Chg Total (mAh/g)": f"{charge_total:.1f}" if dqdv_data.get(
+                    'Charge Total (mAh/g)') is not None else "N/A",
+                "Chg Transition (V)": f"{float(dqdv_data.get('Charge Transition Voltage (V)', 0)):.3f}" if dqdv_data.get(
+                    'Charge Transition Voltage (V)') is not None else "N/A",
+                "Dchg 1st Plateau (mAh/g)": f"{discharge_1st:.1f}" if dqdv_data.get(
+                    'Discharge 1st Plateau (mAh/g)') is not None else "N/A",
+                "Dchg 1st %": f"{discharge_1st_pct:.1f}" if dqdv_data.get(
+                    'Discharge 1st Plateau (mAh/g)') is not None else "N/A",
+                "Dchg 2nd Plateau (mAh/g)": f"{discharge_2nd:.1f}" if dqdv_data.get(
+                    'Discharge 2nd Plateau (mAh/g)') is not None else "N/A",
+                "Dchg 2nd %": f"{discharge_2nd_pct:.1f}" if dqdv_data.get(
+                    'Discharge 2nd Plateau (mAh/g)') is not None else "N/A",
+                "Dchg Total (mAh/g)": f"{discharge_total:.1f}" if dqdv_data.get(
+                    'Discharge Total (mAh/g)') is not None else "N/A",
+                "Dchg Transition (V)": f"{float(dqdv_data.get('Discharge Transition Voltage (V)', 0)):.3f}" if dqdv_data.get(
+                    'Discharge Transition Voltage (V)') is not None else "N/A"
+            }
+
+            consolidated_data.append(consolidated_row)
+
+        return consolidated_data
+
+    def _update_complete_analysis_table(self, features_df, dqdv_stats):
+        """Update the complete analysis table with all metrics and statistics."""
+        # Clear existing items
+        for item in self.complete_table.get_children():
+            self.complete_table.delete(item)
+
+        if features_df is None or features_df.empty:
+            return
+
+        # Get consolidated data
+        consolidated_data = self._consolidate_all_metrics(features_df, dqdv_stats)
+
+        if not consolidated_data:
+            return
+
+        # Group data by cycle for statistics calculation
+        cycles = sorted(set(row['Cycle'] for row in consolidated_data))
+
+        for cycle in cycles:
+            cycle_data = [row for row in consolidated_data if row['Cycle'] == cycle]
+
+            # Add data rows for this cycle
+            for row in cycle_data:
+                values = [row[col] for col in self.complete_columns]
+                self.complete_table.insert('', 'end', values=values)
+
+            # Add statistics rows for this cycle
+            self._add_complete_statistics_rows(cycle_data, cycle)
+
+            # Add separator after each cycle (except the last one)
+            if cycle != cycles[-1]:
+                separator_values = ['-'] * len(self.complete_columns)
+                separator_id = self.complete_table.insert('', 'end', values=separator_values)
+                self.complete_table.item(separator_id, tags=('separator',))
+
+        # Apply styling
+        self.complete_table.tag_configure('separator', background='#f0f0f0')
+        self.complete_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
+
+    def _add_complete_statistics_rows(self, cycle_data, cycle):
+        """Add statistics rows for a specific cycle."""
+        if not cycle_data:
+            return
+
+        # Prepare data for statistics calculation
+        numeric_data = {}
+        for col in self.complete_columns[2:]:  # Skip Cell ID and Cycle columns
+            numeric_data[col] = []
+            for row in cycle_data:
+                value = row[col]
+                if value != "N/A":
+                    try:
+                        numeric_data[col].append(float(value))
+                    except (ValueError, TypeError):
+                        pass
+
+        # Calculate statistics
+        stat_types = [
+            ('Average', lambda values: sum(values) / len(values) if values else 0),
+            ('Std Dev', lambda values: pd.Series(values).std() if len(values) > 1 else 0),
+            ('RSD (%)',
+             lambda values: (pd.Series(values).std() / pd.Series(values).mean() * 100) if len(values) > 1 and pd.Series(
+                 values).mean() != 0 else 0)
+        ]
+
+        for stat_name, stat_func in stat_types:
+            row_values = [stat_name, cycle]
+
+            for col in self.complete_columns[2:]:
+                values = numeric_data[col]
+                if values:
+                    stat_value = stat_func(values)
+                    # Format with appropriate decimal places
+                    if 'Cap' in col or 'Plateau' in col:
+                        row_values.append(f"{stat_value:.1f}")
+                    elif 'Ohms' in col or 'Transition' in col:
+                        row_values.append(f"{stat_value:.3f}")
+                    else:
+                        row_values.append(f"{stat_value:.1f}")
+                else:
+                    row_values.append("N/A")
+
+            stat_id = self.complete_table.insert('', 'end', values=row_values)
+            self.complete_table.item(stat_id, tags=('statistic',))
+
+    def _copy_complete_table_to_clipboard(self):
+        """Copy the complete analysis table data to clipboard in tab-separated format."""
+        try:
+            # Check if the table has data
+            if not self.complete_table.get_children():
+                messagebox.showinfo("Copy Table", "No data to copy from complete analysis table.")
+                return
+
+            # Get column headers
+            columns = self.complete_table["columns"]
+
+            # Create header row
+            header_row = "\t".join(columns)
+
+            # Get all data rows
+            data_rows = []
+            for item_id in self.complete_table.get_children():
+                item_values = self.complete_table.item(item_id)["values"]
+                # Convert all values to strings and join with tabs
+                row_data = "\t".join(str(value) for value in item_values)
+                data_rows.append(row_data)
+
+            # Combine header and data
+            clipboard_content = header_row + "\n" + "\n".join(data_rows)
+
+            # Copy to clipboard
+            self.root.clipboard_clear()
+            self.root.clipboard_append(clipboard_content)
+            self.root.update()  # Ensure clipboard is updated
+
+            # Show confirmation
+            messagebox.showinfo("Copy Successful",
+                                f"Copied {len(data_rows)} rows from complete analysis table to clipboard.")
+            logging.debug(f"FILE_SELECTOR. Complete analysis table data copied to clipboard: {len(data_rows)} rows")
+
+        except Exception as e:
+            messagebox.showerror("Copy Failed", f"An error occurred: {str(e)}")
+            logging.debug(f"FILE_SELECTOR. Error copying complete analysis table data: {e}")
 
     def _comprehensive_cleanup(self):
         """Comprehensive cleanup of all resources before window destruction."""
@@ -685,6 +1007,12 @@ class FileSelector:
             # Update the analysis table with the new data
             if features_df is not None and not features_df.empty:
                 self._update_analysis_table(features_df)
+
+                # Update the complete analysis table with consolidated data
+                if hasattr(self, 'complete_table'):
+                    # Get dqdv_stats from the stored data if available
+                    dqdv_stats_for_complete = getattr(self, '_last_dqdv_stats', [])
+                    self._update_complete_analysis_table(features_df, dqdv_stats_for_complete)
 
             # Update status to show completion
             cycle_text = ", ".join(str(c) for c in self.selected_cycles)
@@ -1319,3 +1647,8 @@ class FileSelector:
         except Exception as e:
             messagebox.showerror("Copy Failed", f"An error occurred: {str(e)}")
             logging.debug(f"FILE_SELECTOR. Error copying dQ/dV table data: {e}")
+
+    def _store_dqdv_stats(self, dqdv_stats):
+        """Store dqdv statistics for use in complete analysis tab."""
+        logging.debug(f"STORE_DQDV: Storing {len(dqdv_stats) if dqdv_stats else 0} dqdv stats")
+        self._last_dqdv_stats = dqdv_stats

@@ -166,6 +166,7 @@ def process_files(ndax_file_list,
                 )
 
                 # FIX: Update GUI with both plots and features data
+                # FIX: Update GUI with both plots and features data
                 if gui_callback:
                     logging.debug(f"MAIN.GUI callback exists: {gui_callback}")
 
@@ -185,8 +186,8 @@ def process_files(ndax_file_list,
                         plateau_stats = dqdv_analyzer.extract_plateaus_batch(data_loader, db, ndax_file_list,
                                                                              selected_cycles)
                         # Extract plateau statistics
-                        #plateau_stats = extract_plateau_stats_with_loader(data_loader, db, ndax_file_list,
-                                                                          #selected_cycles)
+                        # plateau_stats = extract_plateau_stats_with_loader(data_loader, db, ndax_file_list,
+                        # selected_cycles)
                         logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
                         # Call the update method
                         try:
@@ -198,6 +199,9 @@ def process_files(ndax_file_list,
                             if hasattr(gui_callback.__self__, '_store_dqdv_stats'):
                                 logging.debug("MAIN.Storing dqdv_stats for complete analysis tab")
                                 gui_callback.__self__._store_dqdv_stats(plateau_stats)
+                            else:
+                                logging.debug("MAIN._store_dqdv_stats method not found on GUI callback")
+
                         except Exception as e:
                             logging.debug(f"MAIN.Error in update_dqdv_plot: {e}")
                             logging.debug(traceback.format_exc())
