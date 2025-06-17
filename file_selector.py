@@ -65,7 +65,7 @@ class CycleSelectionDialog(tk.Toplevel):
 
             # Dropdown with values 1-10
             dropdown = ttk.Combobox(row_frame, textvariable=var, width=5)
-            dropdown['values'] = list(range(1, 11))  # Cycles 1-10
+            dropdown['values'] = list(range(1, 16))  # Cycles 1-15
             dropdown.pack(side=tk.LEFT)
 
         # Button frame
