@@ -113,6 +113,11 @@ class FileSelector:
         self.canvas = None
         self.selected_cycles = [1, 2, 3]  # Default cycles to display
 
+        # Add voltage range settings
+        self.voltage_range_min = 2.5  # Default min voltage
+        self.voltage_range_max = 3.5  # Default max voltage
+        self.voltage_panel_expanded = False  # Start collapsed
+
     def _open_cycle_selection(self):
         """Open dialog to select which cycles to display."""
         dialog = CycleSelectionDialog(self.root, self.selected_cycles)
@@ -804,8 +809,9 @@ class FileSelector:
 
         # Configure the grid for the dQ/dV tab
         dqdv_tab.columnconfigure(0, weight=1)
-        dqdv_tab.rowconfigure(0, weight=4)  # Main plot area (larger)
-        dqdv_tab.rowconfigure(1, weight=1)  # Statistics area (smaller)
+        dqdv_tab.rowconfigure(0, weight=3)  # Main plot area (larger)
+        dqdv_tab.rowconfigure(1, weight=0)  # Voltage range panel (no expansion)
+        dqdv_tab.rowconfigure(2, weight=1)  # Statistics area (smaller but still expandable)
 
         # Create plot area
         plot_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Plot Preview")
@@ -831,9 +837,12 @@ class FileSelector:
         self.dqdv_canvas.draw()
         self.dqdv_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+        # Create voltage range configuration panel
+        self._create_voltage_range_panel(dqdv_tab)
+
         # Create statistics area
         stats_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Statistics")
-        stats_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        stats_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
 
         # Use grid layout for better control in the stats frame
         stats_frame.columnconfigure(0, weight=1)  # For table area
@@ -857,11 +866,11 @@ class FileSelector:
             "Charge 1st Cap (mAh/g)", "Charge 1st %",
             "Charge 2nd Cap (mAh/g)", "Charge 2nd %",
             "Charge Total (mAh/g)",
-            "Charge Transition (V)",  # NEW
+            "Charge Transition (V)",
             "Discharge 1st Cap (mAh/g)", "Discharge 1st %",
             "Discharge 2nd Cap (mAh/g)", "Discharge 2nd %",
             "Discharge Total (mAh/g)",
-            "Discharge Transition (V)"  # NEW
+            "Discharge Transition (V)"
         ]
 
         # Create the table
@@ -876,13 +885,13 @@ class FileSelector:
             "Charge 2nd Cap (mAh/g)": "Chg 2nd Cap",
             "Charge 2nd %": "Chg 2nd %",
             "Charge Total (mAh/g)": "Chg Total",
-            "Charge Transition (V)": "Chg Trans (V)",  # NEW
+            "Charge Transition (V)": "Chg Trans (V)",
             "Discharge 1st Cap (mAh/g)": "Dchg 1st Cap",
             "Discharge 1st %": "Dchg 1st %",
             "Discharge 2nd Cap (mAh/g)": "Dchg 2nd Cap",
             "Discharge 2nd %": "Dchg 2nd %",
             "Discharge Total (mAh/g)": "Dchg Total",
-            "Discharge Transition (V)": "Dchg Trans (V)"  # NEW
+            "Discharge Transition (V)": "Dchg Trans (V)"
         }
 
         # Configure column headings and widths
@@ -925,6 +934,183 @@ class FileSelector:
 
         return dqdv_tab
 
+    def _create_voltage_range_panel(self, parent):
+        """Create a collapsible panel for voltage range configuration."""
+        # Main frame for the voltage range panel
+        self.voltage_range_frame = ttk.LabelFrame(parent, text="")
+        self.voltage_range_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=2)
+        self.voltage_range_frame.columnconfigure(1, weight=1)
+
+        # Create toggle button and title frame
+        header_frame = ttk.Frame(self.voltage_range_frame)
+        header_frame.pack(fill=tk.X, padx=5, pady=2)
+
+        # Toggle button (starts with ►)
+        self.voltage_toggle_btn = ttk.Button(
+            header_frame,
+            text="► Voltage Range Settings",
+            command=self._toggle_voltage_panel,
+            width=25
+        )
+        self.voltage_toggle_btn.pack(side=tk.LEFT)
+
+        # Content frame (initially hidden)
+        self.voltage_content_frame = ttk.Frame(self.voltage_range_frame)
+        # Don't pack it initially (collapsed state)
+
+        # Configure content frame grid
+        self.voltage_content_frame.columnconfigure(1, weight=1)
+        self.voltage_content_frame.columnconfigure(3, weight=1)
+
+        # Voltage range inputs
+        ttk.Label(self.voltage_content_frame, text="Min Voltage (V):").grid(
+            row=0, column=0, padx=5, pady=5, sticky="w"
+        )
+
+        self.min_voltage_var = tk.DoubleVar(value=self.voltage_range_min)
+        self.min_voltage_entry = ttk.Entry(
+            self.voltage_content_frame,
+            textvariable=self.min_voltage_var,
+            width=8
+        )
+        self.min_voltage_entry.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        ttk.Label(self.voltage_content_frame, text="Max Voltage (V):").grid(
+            row=0, column=2, padx=5, pady=5, sticky="w"
+        )
+
+        self.max_voltage_var = tk.DoubleVar(value=self.voltage_range_max)
+        self.max_voltage_entry = ttk.Entry(
+            self.voltage_content_frame,
+            textvariable=self.max_voltage_var,
+            width=8
+        )
+        self.max_voltage_entry.grid(row=0, column=3, padx=5, pady=5, sticky="w")
+
+        # Buttons frame
+        button_frame = ttk.Frame(self.voltage_content_frame)
+        button_frame.grid(row=1, column=0, columnspan=4, pady=5)
+
+        # Apply button (initially disabled)
+        self.voltage_apply_btn = ttk.Button(
+            button_frame,
+            text="Apply",
+            command=self._apply_voltage_range,
+            state="disabled"
+        )
+        self.voltage_apply_btn.pack(side=tk.LEFT, padx=5)
+
+        # Reset button
+        ttk.Button(
+            button_frame,
+            text="Reset to Default",
+            command=self._reset_voltage_range
+        ).pack(side=tk.LEFT, padx=5)
+
+    def _toggle_voltage_panel(self):
+        """Toggle the visibility of the voltage range configuration panel."""
+        if self.voltage_panel_expanded:
+            # Collapse panel
+            self.voltage_content_frame.pack_forget()
+            self.voltage_toggle_btn.config(text="► Voltage Range Settings")
+            self.voltage_panel_expanded = False
+        else:
+            # Expand panel
+            self.voltage_content_frame.pack(fill=tk.X, padx=5, pady=5)
+            self.voltage_toggle_btn.config(text="▼ Voltage Range Settings")
+            self.voltage_panel_expanded = True
+
+    def _validate_voltage_range(self):
+        """Validate the voltage range inputs."""
+        try:
+            min_val = self.min_voltage_var.get()
+            max_val = self.max_voltage_var.get()
+
+            if min_val >= max_val:
+                messagebox.showerror(
+                    "Invalid Range",
+                    "Minimum voltage must be less than maximum voltage."
+                )
+                return False
+
+            if min_val < 0 or max_val < 0:
+                messagebox.showerror(
+                    "Invalid Range",
+                    "Voltage values must be positive."
+                )
+                return False
+
+            if max_val > 5.0:  # Reasonable upper limit for battery voltages
+                messagebox.showerror(
+                    "Invalid Range",
+                    "Maximum voltage seems unusually high (>5.0V). Please verify."
+                )
+                return False
+
+            return True
+
+        except tk.TclError:
+            messagebox.showerror(
+                "Invalid Input",
+                "Please enter valid numeric values for voltage range."
+            )
+            return False
+
+    def _apply_voltage_range(self):
+        """Apply the new voltage range and reprocess files."""
+        if not self._validate_voltage_range():
+            return
+
+        # Update stored voltage range
+        self.voltage_range_min = self.min_voltage_var.get()
+        self.voltage_range_max = self.max_voltage_var.get()
+
+        # Show processing message
+        old_status = self.status_var.get()
+        self.status_var.set(
+            f"Recalculating with voltage range {self.voltage_range_min:.1f}-{self.voltage_range_max:.1f}V...")
+        self.root.update()
+
+        # Reprocess files if we have selected files and a callback
+        if self.selected_files and hasattr(self, '_last_callback') and self._last_callback:
+            try:
+                # Call the processing function with updated voltage range
+                features_df = self._last_callback(self.selected_files)
+
+                # Update tables
+                if features_df is not None and not features_df.empty:
+                    self._update_analysis_table(features_df)
+
+                    # Update complete analysis table if available
+                    if hasattr(self, 'complete_table'):
+                        dqdv_stats_for_complete = getattr(self, '_last_dqdv_stats', [])
+                        self._update_complete_analysis_table(features_df, dqdv_stats_for_complete)
+
+                # Update status
+                cycle_text = ", ".join(str(c) for c in self.selected_cycles)
+                self.status_var.set(
+                    f"Recalculated with voltage range {self.voltage_range_min:.1f}-{self.voltage_range_max:.1f}V. Cycles: {cycle_text}")
+
+            except Exception as e:
+                logging.debug(f"Error during voltage range recalculation: {e}")
+                messagebox.showerror("Processing Error", f"Error during recalculation: {str(e)}")
+                self.status_var.set(old_status)
+        else:
+            self.status_var.set("Voltage range updated. Process files to see changes.")
+
+    def _reset_voltage_range(self):
+        """Reset voltage range to default values."""
+        self.min_voltage_var.set(2.5)
+        self.max_voltage_var.set(3.5)
+
+    def _update_voltage_apply_button(self):
+        """Enable/disable the voltage apply button based on file selection."""
+        if hasattr(self, 'voltage_apply_btn'):
+            if self.selected_files:
+                self.voltage_apply_btn.config(state="normal")
+            else:
+                self.voltage_apply_btn.config(state="disabled")
+
     def _browse_directory(self):
         """Open dialog to select a directory and update the file list."""
         dir_path = filedialog.askdirectory(initialdir=self.current_dir.get())
@@ -966,6 +1152,9 @@ class FileSelector:
                 self.selected_files.append(full_path)
                 self.selected_listbox.insert(tk.END, file)
 
+        # ADD THIS LINE:
+        self._update_voltage_apply_button()
+
     def _remove_selected_files(self):
         """Remove selected files from the selected list."""
         selected_indices = self.selected_listbox.curselection()
@@ -976,6 +1165,9 @@ class FileSelector:
             if full_path in self.selected_files:
                 self.selected_files.remove(full_path)
             self.selected_listbox.delete(i)
+
+        # ADD THIS LINE:
+        self._update_voltage_apply_button()
 
     def _process_files(self, callback):
         """Process the selected files using the provided callback function."""
@@ -1037,6 +1229,10 @@ class FileSelector:
         """Clear the current file selection."""
         self.selected_files = []
         self.selected_listbox.delete(0, tk.END)
+
+        # ADD THIS LINE:
+        self._update_voltage_apply_button()
+
         messagebox.showinfo("Selection Cleared", "File selection has been cleared.")
 
     def _update_status_display(self):
@@ -1652,3 +1848,4 @@ class FileSelector:
         """Store dqdv statistics for use in complete analysis tab."""
         logging.debug(f"STORE_DQDV: Storing {len(dqdv_stats) if dqdv_stats else 0} dqdv stats")
         self._last_dqdv_stats = dqdv_stats
+

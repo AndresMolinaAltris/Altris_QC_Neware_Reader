@@ -23,7 +23,8 @@ def process_files(ndax_file_list,
                   db,
                   selected_cycles=None,
                   enable_plotting=True,
-                  gui_callback=None):
+                  gui_callback=None,
+                  voltage_range=(2.5, 3.5)):  # ADD NEW PARAMETER
     """
     Process a list of NDAX files and return the extracted features dataframe.
 
@@ -33,11 +34,13 @@ def process_files(ndax_file_list,
         selected_cycles: List of 3 cycle numbers to process and display (default: [1, 2, 3])
         enable_plotting: Whether to generate plots
         gui_callback: Callback function for updating GUI
+        voltage_range: Tuple with min and max voltage for inflection point detection
 
     Returns:
         DataFrame containing extracted features
     """
     logging.debug("MAIN. process_files started")
+    logging.debug(f"MAIN. Using voltage range: {voltage_range}")
 
     # Use default cycles if none provided
     if selected_cycles is None or len(selected_cycles) == 0:
@@ -165,8 +168,7 @@ def process_files(ndax_file_list,
                     selected_cycles=selected_cycles
                 )
 
-                # FIX: Update GUI with both plots and features data
-                # FIX: Update GUI with both plots and features data
+                # Update GUI with both plots and features data
                 if gui_callback:
                     logging.debug(f"MAIN.GUI callback exists: {gui_callback}")
 
@@ -181,13 +183,12 @@ def process_files(ndax_file_list,
                     # Update dQ/dV tab if we have the figure
                     if dqdv_fig and hasattr(gui_callback.__self__, 'update_dqdv_plot'):
                         logging.debug("MAIN.GUI callback has update_dqdv_plot method")
-                        # Extract plateau statistics using DQDVAnalysis batch method
+                        # Extract plateau statistics using DQDVAnalysis batch method with voltage_range
                         dqdv_analyzer = DQDVAnalysis("plateau_extractor")
-                        plateau_stats = dqdv_analyzer.extract_plateaus_batch(data_loader, db, ndax_file_list,
-                                                                             selected_cycles)
-                        # Extract plateau statistics
-                        # plateau_stats = extract_plateau_stats_with_loader(data_loader, db, ndax_file_list,
-                        # selected_cycles)
+                        plateau_stats = dqdv_analyzer.extract_plateaus_batch(
+                            data_loader, db, ndax_file_list, selected_cycles, voltage_range
+                        )  # PASS VOLTAGE_RANGE PARAMETER
+
                         logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
                         # Call the update method
                         try:
@@ -291,13 +292,18 @@ def main():
         selected_cycles = file_selector_instance.selected_cycles
         logging.debug(f"MAIN.Using selected cycles: {selected_cycles}")
 
+        # Get voltage range from the file selector
+        voltage_range = (file_selector_instance.voltage_range_min, file_selector_instance.voltage_range_max)
+        logging.debug(f"MAIN.Using voltage range: {voltage_range}")
+
         # Process files with plotting enabled
         features_df = process_files(
             ndax_file_list,
             db,
             selected_cycles=selected_cycles,  # Pass the selected cycles
             enable_plotting=enable_plotting,
-            gui_callback=file_selector_instance.update_plot
+            gui_callback=file_selector_instance.update_plot,
+            voltage_range=voltage_range  # PASS THE VOLTAGE RANGE
         )
 
         if not features_df.empty:

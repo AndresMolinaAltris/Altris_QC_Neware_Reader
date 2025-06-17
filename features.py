@@ -439,7 +439,7 @@ class DQDVAnalysis:
             print(f"Moving average smoothing failed: {e}")
             return data
 
-    def extract_plateaus(self, df, cycle, mass=1.0, transition_voltage=None):
+    def extract_plateaus(self, df, cycle, mass=1.0, transition_voltage=None, voltage_range=(2.5, 3.5)):
         """
         Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
 
@@ -452,6 +452,7 @@ class DQDVAnalysis:
             mass: Float representing the mass of active material (default: 1.0 g)
             transition_voltage: Optional float to specify the transition voltage
                 If None, will use inflection point detection or default to 3.2V
+            voltage_range: Tuple with min and max voltage for inflection point detection
 
         Returns:
             Dictionary containing plateau capacities for both charge and discharge
@@ -464,8 +465,8 @@ class DQDVAnalysis:
 
             # If transition_voltage is not provided, try inflection point detection
             if transition_voltage is None:
-                # Try to find inflection points using new method
-                inflection_result = self.find_inflection_point(df, cycle)
+                # Try to find inflection points using new method with voltage_range parameter
+                inflection_result = self.find_inflection_point(df, cycle, voltage_range)
 
                 if inflection_result:
                     # Use inflection points if available
@@ -564,7 +565,7 @@ class DQDVAnalysis:
                 "Discharge Total (mAh/g)": np.nan
             }
 
-    def extract_plateaus_batch(self, data_loader, db, file_list, selected_cycles=None):
+    def extract_plateaus_batch(self, data_loader, db, file_list, selected_cycles=None, voltage_range=(2.5, 3.5)):
         """
         Extract plateau capacity statistics from DataLoader cache for multiple files and cycles.
 
@@ -573,6 +574,7 @@ class DQDVAnalysis:
             db: CellDatabase instance for mass lookup
             file_list: List of file paths to process
             selected_cycles: List of cycles to extract plateaus for (default: [1, 2, 3])
+            voltage_range: Tuple with min and max voltage for inflection point detection
 
         Returns:
             List of dictionaries with plateau capacity statistics for GUI display
@@ -615,8 +617,8 @@ class DQDVAnalysis:
                     continue
 
                 try:
-                    # Extract plateau capacities using existing method
-                    plateau_data = self.extract_plateaus(df, cycle, mass)
+                    # Extract plateau capacities using existing method with voltage_range parameter
+                    plateau_data = self.extract_plateaus(df, cycle, mass, voltage_range=voltage_range)
 
                     if plateau_data:
                         # Add file and cycle information
@@ -684,12 +686,12 @@ class DQDVAnalysis:
         Args:
             df: DataFrame with battery data
             cycle: Cycle number to analyze
-            voltage_range: Tuple with min and max voltage for analysis range
+            voltage_range: Tuple with min and max voltage for analysis range (default: (2.5, 3.5))
 
         Returns:
             Dictionary with charge and discharge inflection voltages
         """
-        logging.debug("DQDVAnalysis.find_inflection_point started")
+        logging.debug(f"DQDVAnalysis.find_inflection_point started with voltage_range: {voltage_range}")
 
         # Filter data for the specified cycle
         cycle_df = df[df["Cycle"] == int(cycle)].copy()
@@ -724,7 +726,7 @@ class DQDVAnalysis:
             # Apply smoothing with 15-point moving average
             dV_dQ_smooth = np.convolve(dV_dQ, np.ones(15) / 15, mode='same')
 
-            # Filter to voltage range
+            # Filter to voltage range - USE PARAMETER INSTEAD OF HARDCODED VALUES
             mask = (volt >= voltage_range[0]) & (volt <= voltage_range[1])
             valid_indices = np.where(mask)[0]
 
@@ -771,9 +773,9 @@ class DQDVAnalysis:
                     result[f'{key_prefix}_inflection_capacity'] = float(inflection_capacity)
 
                     logging.debug(
-                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh")
+                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh using range {voltage_range}")
                 else:
-                    logging.debug(f"No peaks found for {status} in cycle {cycle}")
+                    logging.debug(f"No peaks found for {status} in cycle {cycle} within range {voltage_range}")
 
             except Exception as e:
                 logging.debug(f"Error in peak detection for {status}: {e}")
@@ -781,4 +783,3 @@ class DQDVAnalysis:
 
         logging.debug("DQDVAnalysis.find_inflection_point finished")
         return result if result else None
-
