@@ -50,13 +50,21 @@ class Features:
     def extract_internal_resistance_soc_0(self, df, features, cycle):
         """
         Extracts internal resistance at SOC = 0% from the dataset.
-
-        :param df: pandas DataFrame containing experimental data.
-        :param features: Dictionary to store extracted features.
-        :param cycle: Integer representing the cycle number.
+        For cycle 1: looks at step 1 (initial rest)
+        For cycle 2+: looks at step 5 (rest after discharge)
         """
         try:
-            idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 1)
+            if int(cycle) == 1:
+                # For cycle 1, SOC 0% is at step 1 (initial rest)
+                idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 1)
+            else:
+                # For cycles 2+, SOC 0% is at step 5 (rest after discharge)
+                idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 5)
+
+            if not idx.any():
+                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
+                return
+
             index = df[idx].index[-1]
             ocv = round(df["Voltage"][index], 4)
             ocv_dV = round(df["Voltage"][index + 1], 4)
@@ -70,13 +78,15 @@ class Features:
     def extract_internal_resistance_soc_100(self, df, features, cycle):
         """
         Extracts internal resistance at SOC = 100% from the dataset.
-
-        :param df: pandas DataFrame containing experimental data.
-        :param features: Dictionary to store extracted features.
-        :param cycle: Integer representing the cycle number.
+        For all cycles: looks at step 3 (rest after charge)
         """
         try:
             idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 3)
+
+            if not idx.any():
+                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                return
+
             index = df[idx].index[-1]
             ocv = round(df["Voltage"][index], 4)
             ocv_dV = round(df["Voltage"][index + 1], 4)
