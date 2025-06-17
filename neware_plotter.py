@@ -614,13 +614,21 @@ class NewarePlotter:
                     continue
 
                 try:
-                    # Get voltage range from GUI if available
-                    voltage_range = (2.5, 3.5)  # Default
-                    if hasattr(self, '_gui_voltage_range'):
-                        voltage_range = self._gui_voltage_range
+                    # Get separate voltage ranges from GUI if available
+                    charge_voltage_range = (2.5, 3.5)  # Default
+                    discharge_voltage_range = (2.5, 3.5)  # Default
 
-                    # Extract plateau data which includes transition voltages
-                    plateau_data = dqdv_analyzer.extract_plateaus(df, cycle, mass, voltage_range=voltage_range)
+                    if hasattr(self, '_gui_charge_voltage_range'):
+                        charge_voltage_range = self._gui_charge_voltage_range
+                    if hasattr(self, '_gui_discharge_voltage_range'):
+                        discharge_voltage_range = self._gui_discharge_voltage_range
+
+                    # Extract plateau data which includes transition voltages with separate ranges
+                    plateau_data = dqdv_analyzer.extract_plateaus(
+                        df, cycle, mass,
+                        charge_voltage_range=charge_voltage_range,
+                        discharge_voltage_range=discharge_voltage_range
+                    )
 
                     if plateau_data:
                         plateau_data["File"] = cell_ID

@@ -24,7 +24,8 @@ def process_files(ndax_file_list,
                   selected_cycles=None,
                   enable_plotting=True,
                   gui_callback=None,
-                  voltage_range=(2.5, 3.5)):  # ADD NEW PARAMETER
+                  charge_voltage_range=(3.1, 3.3),   # NEW: separate charge range
+                  discharge_voltage_range=(3.1, 3.3)): # NEW: separate discharge range
     """
     Process a list of NDAX files and return the extracted features dataframe.
 
@@ -34,13 +35,16 @@ def process_files(ndax_file_list,
         selected_cycles: List of 3 cycle numbers to process and display (default: [1, 2, 3])
         enable_plotting: Whether to generate plots
         gui_callback: Callback function for updating GUI
-        voltage_range: Tuple with min and max voltage for inflection point detection
+        charge_voltage_range: Tuple with min and max voltage for charge inflection point detection
+        discharge_voltage_range: Tuple with min and max voltage for discharge inflection point detection
 
     Returns:
         DataFrame containing extracted features
     """
     logging.debug("MAIN. process_files started")
-    logging.debug(f"MAIN. Using voltage range: {voltage_range}")
+    logging.debug(f"MAIN. Using charge voltage range: {charge_voltage_range}")
+    logging.debug(f"MAIN. Using discharge voltage range: {discharge_voltage_range}")
+
 
     # Use default cycles if none provided
     if selected_cycles is None or len(selected_cycles) == 0:
@@ -159,8 +163,10 @@ def process_files(ndax_file_list,
 
                 # Generate dQ/dV plots
                 logging.debug("MAIN.Generating dQ/dV plots...")
-                # Store voltage range in plotter for transition voltage extraction
-                plotter._gui_voltage_range = voltage_range
+                # Store both voltage ranges in plotter for transition voltage extraction
+                plotter._gui_charge_voltage_range = charge_voltage_range
+                plotter._gui_discharge_voltage_range = discharge_voltage_range
+
                 dqdv_fig = plotter.plot_dqdv_curves_with_loader(
                     data_loader,
                     ndax_file_list,
@@ -185,11 +191,12 @@ def process_files(ndax_file_list,
                     # Update dQ/dV tab if we have the figure
                     if dqdv_fig and hasattr(gui_callback.__self__, 'update_dqdv_plot'):
                         logging.debug("MAIN.GUI callback has update_dqdv_plot method")
-                        # Extract plateau statistics using DQDVAnalysis batch method with voltage_range
+                        # Extract plateau statistics using DQDVAnalysis batch method with separate voltage ranges
                         dqdv_analyzer = DQDVAnalysis("plateau_extractor")
                         plateau_stats = dqdv_analyzer.extract_plateaus_batch(
-                            data_loader, db, ndax_file_list, selected_cycles, voltage_range
-                        )  # PASS VOLTAGE_RANGE PARAMETER
+                            data_loader, db, ndax_file_list, selected_cycles,
+                            charge_voltage_range, discharge_voltage_range  # PASS BOTH RANGES
+                        )
 
                         logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
                         # Call the update method
@@ -294,9 +301,17 @@ def main():
         selected_cycles = file_selector_instance.selected_cycles
         logging.debug(f"MAIN.Using selected cycles: {selected_cycles}")
 
-        # Get voltage range from the file selector
-        voltage_range = (file_selector_instance.voltage_range_min, file_selector_instance.voltage_range_max)
-        logging.debug(f"MAIN.Using voltage range: {voltage_range}")
+        # Get separate voltage ranges from the file selector
+        charge_voltage_range = (
+            file_selector_instance.charge_voltage_range_min,
+            file_selector_instance.charge_voltage_range_max
+        )
+        discharge_voltage_range = (
+            file_selector_instance.discharge_voltage_range_min,
+            file_selector_instance.discharge_voltage_range_max
+        )
+        logging.debug(f"MAIN.Using charge voltage range: {charge_voltage_range}")
+        logging.debug(f"MAIN.Using discharge voltage range: {discharge_voltage_range}")
 
         # Process files with plotting enabled
         features_df = process_files(
@@ -305,7 +320,8 @@ def main():
             selected_cycles=selected_cycles,  # Pass the selected cycles
             enable_plotting=enable_plotting,
             gui_callback=file_selector_instance.update_plot,
-            voltage_range=voltage_range  # PASS THE VOLTAGE RANGE
+            charge_voltage_range=charge_voltage_range,  # PASS CHARGE RANGE
+            discharge_voltage_range=discharge_voltage_range  # PASS DISCHARGE RANGE
         )
 
         if not features_df.empty:

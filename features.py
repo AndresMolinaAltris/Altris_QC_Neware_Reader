@@ -439,7 +439,8 @@ class DQDVAnalysis:
             print(f"Moving average smoothing failed: {e}")
             return data
 
-    def extract_plateaus(self, df, cycle, mass=1.0, transition_voltage=None, voltage_range=(2.5, 3.5)):
+    def extract_plateaus(self, df, cycle, mass=1.0, transition_voltage=None, charge_voltage_range=(3.0, 3.3),
+                         discharge_voltage_range=(2.9, 3.1)):
         """
         Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
 
@@ -452,7 +453,8 @@ class DQDVAnalysis:
             mass: Float representing the mass of active material (default: 1.0 g)
             transition_voltage: Optional float to specify the transition voltage
                 If None, will use inflection point detection or default to 3.2V
-            voltage_range: Tuple with min and max voltage for inflection point detection
+            charge_voltage_range: Tuple with min and max voltage for charge inflection point detection
+            discharge_voltage_range: Tuple with min and max voltage for discharge inflection point detection
 
         Returns:
             Dictionary containing plateau capacities for both charge and discharge
@@ -465,8 +467,8 @@ class DQDVAnalysis:
 
             # If transition_voltage is not provided, try inflection point detection
             if transition_voltage is None:
-                # Try to find inflection points using new method with voltage_range parameter
-                inflection_result = self.find_inflection_point(df, cycle, voltage_range)
+                # Try to find inflection points using new method with separate voltage ranges
+                inflection_result = self.find_inflection_point(df, cycle, charge_voltage_range, discharge_voltage_range)
 
                 if inflection_result:
                     # Use inflection points if available
@@ -554,8 +556,11 @@ class DQDVAnalysis:
             logging.debug("FEATURES.extract_plateaus finished")
             return result
 
+
         except Exception as e:
+
             logging.debug(f"FEATURES.extract_plateaus finished with error. Error calculating plateau capacities: {e}")
+
             return {
                 "Charge 1st Plateau (mAh/g)": np.nan,
                 "Charge 2nd Plateau (mAh/g)": np.nan,
@@ -565,7 +570,8 @@ class DQDVAnalysis:
                 "Discharge Total (mAh/g)": np.nan
             }
 
-    def extract_plateaus_batch(self, data_loader, db, file_list, selected_cycles=None, voltage_range=(2.5, 3.5)):
+    def extract_plateaus_batch(self, data_loader, db, file_list, selected_cycles=None, charge_voltage_range=(3.0, 3.3),
+                               discharge_voltage_range=(2.9, 3.1)):
         """
         Extract plateau capacity statistics from DataLoader cache for multiple files and cycles.
 
@@ -574,7 +580,8 @@ class DQDVAnalysis:
             db: CellDatabase instance for mass lookup
             file_list: List of file paths to process
             selected_cycles: List of cycles to extract plateaus for (default: [1, 2, 3])
-            voltage_range: Tuple with min and max voltage for inflection point detection
+            charge_voltage_range: Tuple with min and max voltage for charge inflection point detection
+            discharge_voltage_range: Tuple with min and max voltage for discharge inflection point detection
 
         Returns:
             List of dictionaries with plateau capacity statistics for GUI display
@@ -617,8 +624,10 @@ class DQDVAnalysis:
                     continue
 
                 try:
-                    # Extract plateau capacities using existing method with voltage_range parameter
-                    plateau_data = self.extract_plateaus(df, cycle, mass, voltage_range=voltage_range)
+                    # Extract plateau capacities using existing method with separate voltage ranges
+                    plateau_data = self.extract_plateaus(df, cycle, mass,
+                                                         charge_voltage_range=charge_voltage_range,
+                                                         discharge_voltage_range=discharge_voltage_range)
 
                     if plateau_data:
                         # Add file and cycle information
@@ -679,19 +688,21 @@ class DQDVAnalysis:
 
         return result
 
-    def find_inflection_point(self, df, cycle, voltage_range=(2.5, 3.5)):
+    def find_inflection_point(self, df, cycle, charge_voltage_range=(3.0, 3.3), discharge_voltage_range=(2.9, 3.1)):
         """
         Find inflection point using dV/dQ gradient analysis with peak detection.
 
         Args:
             df: DataFrame with battery data
             cycle: Cycle number to analyze
-            voltage_range: Tuple with min and max voltage for analysis range (default: (2.5, 3.5))
+            charge_voltage_range: Tuple with min and max voltage for charge analysis range
+            discharge_voltage_range: Tuple with min and max voltage for discharge analysis range
 
         Returns:
             Dictionary with charge and discharge inflection voltages
         """
-        logging.debug(f"DQDVAnalysis.find_inflection_point started with voltage_range: {voltage_range}")
+        logging.debug(
+            f"DQDVAnalysis.find_inflection_point started with charge_range: {charge_voltage_range}, discharge_range: {discharge_voltage_range}")
 
         # Filter data for the specified cycle
         cycle_df = df[df["Cycle"] == int(cycle)].copy()
@@ -702,8 +713,13 @@ class DQDVAnalysis:
 
         result = {}
 
-        # Process charge and discharge separately
-        for status, capacity_col in [('CC_Chg', 'Charge_Capacity(mAh)'), ('CC_DChg', 'Discharge_Capacity(mAh)')]:
+        # Process charge and discharge separately with their respective voltage ranges
+        processing_params = [
+            ('CC_Chg', 'Charge_Capacity(mAh)', charge_voltage_range, 'charge'),
+            ('CC_DChg', 'Discharge_Capacity(mAh)', discharge_voltage_range, 'discharge')
+        ]
+
+        for status, capacity_col, voltage_range, key_prefix in processing_params:
             seg_data = cycle_df[cycle_df['Status'] == status].copy()
 
             if len(seg_data) < 10:
@@ -726,7 +742,7 @@ class DQDVAnalysis:
             # Apply smoothing with 15-point moving average
             dV_dQ_smooth = np.convolve(dV_dQ, np.ones(15) / 15, mode='same')
 
-            # Filter to voltage range - USE PARAMETER INSTEAD OF HARDCODED VALUES
+            # Filter to the specific voltage range for this curve type
             mask = (volt >= voltage_range[0]) & (volt <= voltage_range[1])
             valid_indices = np.where(mask)[0]
 
@@ -768,7 +784,6 @@ class DQDVAnalysis:
                     inflection_capacity = sub_cap[best_peak_idx]
 
                     # Store result
-                    key_prefix = 'charge' if status == 'CC_Chg' else 'discharge'
                     result[f'{key_prefix}_inflection_voltage'] = float(inflection_voltage)
                     result[f'{key_prefix}_inflection_capacity'] = float(inflection_capacity)
 
