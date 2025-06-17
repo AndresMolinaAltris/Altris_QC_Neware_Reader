@@ -439,8 +439,8 @@ class DQDVAnalysis:
             print(f"Moving average smoothing failed: {e}")
             return data
 
-    def extract_plateaus(self, df, cycle, mass=1.0, transition_voltage=None, charge_voltage_range=(3.0, 3.3),
-                         discharge_voltage_range=(2.9, 3.1)):
+    def extract_plateaus(self, df, cycle, mass=1.0, transition_voltage=None, charge_voltage_range=(3.1, 3.3),
+                         discharge_voltage_range=(3.1, 3.3)):
         """
         Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
 
@@ -570,8 +570,8 @@ class DQDVAnalysis:
                 "Discharge Total (mAh/g)": np.nan
             }
 
-    def extract_plateaus_batch(self, data_loader, db, file_list, selected_cycles=None, charge_voltage_range=(3.0, 3.3),
-                               discharge_voltage_range=(2.9, 3.1)):
+    def extract_plateaus_batch(self, data_loader, db, file_list, selected_cycles=None, charge_voltage_range=(3.1, 3.3),
+                               discharge_voltage_range=(3.1, 3.3)):
         """
         Extract plateau capacity statistics from DataLoader cache for multiple files and cycles.
 
@@ -688,7 +688,7 @@ class DQDVAnalysis:
 
         return result
 
-    def find_inflection_point(self, df, cycle, charge_voltage_range=(3.0, 3.3), discharge_voltage_range=(2.9, 3.1)):
+    def find_inflection_point(self, df, cycle, charge_voltage_range=(3.1, 3.3), discharge_voltage_range=(3.1, 3.3)):
         """
         Find inflection point using dV/dQ gradient analysis with peak detection.
 
