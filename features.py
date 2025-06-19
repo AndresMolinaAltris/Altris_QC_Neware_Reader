@@ -51,49 +51,151 @@ class Features:
         """
         Extracts internal resistance at SOC = 0% from the dataset.
         For cycle 1: looks at step 1 (initial rest)
-        For cycle 2+: looks at step 5 (rest after discharge)
+        For cycle 2+: dynamically finds rest step that occurs after discharge
         """
         try:
             if int(cycle) == 1:
                 # For cycle 1, SOC 0% is at step 1 (initial rest)
                 idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 1)
             else:
-                # For cycles 2+, SOC 0% is at step 5 (rest after discharge)
-                idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 5)
+                # For cycles 2+, find rest step that occurs after discharge
+                cycle_data = df[df["Cycle"] == int(cycle)].copy()
+
+                if cycle_data.empty:
+                    features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
+                    return
+
+                # Sort by index to maintain chronological order
+                cycle_data = cycle_data.sort_index()
+
+                # Find rest steps that are preceded by discharge steps
+                rest_steps = []
+                prev_status = None
+
+                for _, row in cycle_data.iterrows():
+                    current_status = row["Status"]
+                    current_step = row["Step"]
+
+                    # If current is rest and previous was discharge, this is SOC 0%
+                    if (current_status == "Rest" and
+                            prev_status is not None and
+                            "DChg" in prev_status):
+                        rest_steps.append(current_step)
+
+                    prev_status = current_status
+
+                if not rest_steps:
+                    features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
+                    return
+
+                # Use the last rest step after discharge (in case there are multiple)
+                target_step = rest_steps[-1]
+                idx = ((df["Status"] == "Rest") &
+                       (df["Cycle"] == int(cycle)) &
+                       (df["Step"] == target_step))
 
             if not idx.any():
                 features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
                 return
 
-            index = df[idx].index[-1]
+            # Find the last index of the rest period
+            rest_indices = df[idx].index
+            if len(rest_indices) == 0:
+                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
+                return
+
+            index = rest_indices[-1]
+
+            # Check if we have a next data point for calculation
+            if index + 1 >= len(df):
+                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
+                return
+
             ocv = round(df["Voltage"][index], 4)
             ocv_dV = round(df["Voltage"][index + 1], 4)
             delta_current = abs(df["Current(mA)"][index + 1] - df["Current(mA)"][index])
+
+            if delta_current == 0:
+                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
+                return
+
             delta_V = abs(ocv_dV - ocv)
             internal_resistance = delta_V / (delta_current / 1000)
             features["Internal Resistance at SOC 0 (Ohms)"] = round(internal_resistance, 4)
+
         except Exception:
             features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
 
     def extract_internal_resistance_soc_100(self, df, features, cycle):
         """
         Extracts internal resistance at SOC = 100% from the dataset.
-        For all cycles: looks at step 3 (rest after charge)
+        Dynamically finds rest step that occurs after charge for all cycles
         """
         try:
-            idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 3)
+            cycle_data = df[df["Cycle"] == int(cycle)].copy()
+
+            if cycle_data.empty:
+                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                return
+
+            # Sort by index to maintain chronological order
+            cycle_data = cycle_data.sort_index()
+
+            # Find rest steps that are preceded by charge steps
+            rest_steps = []
+            prev_status = None
+
+            for _, row in cycle_data.iterrows():
+                current_status = row["Status"]
+                current_step = row["Step"]
+
+                # If current is rest and previous was charge, this is SOC 100%
+                if (current_status == "Rest" and
+                        prev_status is not None and
+                        "Chg" in prev_status):
+                    rest_steps.append(current_step)
+
+                prev_status = current_status
+
+            if not rest_steps:
+                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                return
+
+            # Use the last rest step after charge (in case there are multiple)
+            target_step = rest_steps[-1]
+            idx = ((df["Status"] == "Rest") &
+                   (df["Cycle"] == int(cycle)) &
+                   (df["Step"] == target_step))
 
             if not idx.any():
                 features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
                 return
 
-            index = df[idx].index[-1]
+            # Find the last index of the rest period
+            rest_indices = df[idx].index
+            if len(rest_indices) == 0:
+                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                return
+
+            index = rest_indices[-1]
+
+            # Check if we have a next data point for calculation
+            if index + 1 >= len(df):
+                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                return
+
             ocv = round(df["Voltage"][index], 4)
             ocv_dV = round(df["Voltage"][index + 1], 4)
             delta_current = abs(df["Current(mA)"][index + 1] - df["Current(mA)"][index])
+
+            if delta_current == 0:
+                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                return
+
             delta_V = abs(ocv_dV - ocv)
             internal_resistance = delta_V / (delta_current / 1000)
             features["Internal Resistance at SOC 100 (Ohms)"] = round(internal_resistance, 4)
+
         except Exception:
             features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
 
