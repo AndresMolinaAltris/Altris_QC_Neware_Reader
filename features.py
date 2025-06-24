@@ -845,7 +845,7 @@ class DQDVAnalysis:
             dV_dQ_smooth = np.convolve(dV_dQ, np.ones(15) / 15, mode='same')
 
             # Filter to the specific voltage range for this curve type
-            mask = (volt >= voltage_range[0]) & (volt <= voltage_range[1])
+            mask = (volt >= voltage_range[0]) & (volt <= voltage_range[1]) # This line needs to change to capacity limits
             valid_indices = np.where(mask)[0]
 
             if len(valid_indices) == 0:
