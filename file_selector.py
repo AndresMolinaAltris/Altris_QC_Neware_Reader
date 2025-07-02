@@ -281,6 +281,8 @@ class FileSelector:
         # Define complete metrics columns in grouped order
         self.complete_columns = [
             "Cell ID", "Cycle",
+            # C-Rate columns
+            "Charge C-Rate", "Discharge C-Rate",
             # Capacity Metrics
             "Charge Cap (mAh)", "Discharge Cap (mAh)",
             "Specific Charge Cap (mAh/g)", "Specific Discharge Cap (mAh/g)",
@@ -302,6 +304,7 @@ class FileSelector:
         # Configure column headings and widths
         column_widths = {
             "Cell ID": 80, "Cycle": 60,
+            "Charge C-Rate": 90, "Discharge C-Rate": 90,
             "Charge Cap (mAh)": 100, "Discharge Cap (mAh)": 100,
             "Specific Charge Cap (mAh/g)": 120, "Specific Discharge Cap (mAh/g)": 120,
             "Coulombic Eff (%)": 100,
@@ -357,6 +360,32 @@ class FileSelector:
 
         return complete_tab
 
+    def _extract_current_data(self, df, cycle):
+        """
+        Extract average current values for charge and discharge phases of a specific cycle.
+
+        Args:
+            df: DataFrame with battery data
+            cycle: Cycle number to extract currents from
+
+        Returns:
+            Tuple of (charge_current, discharge_current) in mA
+        """
+        try:
+            # Get charge current (average during CC_Chg phase)
+            charge_data = df[(df['Cycle'] == cycle) & (df['Status'] == 'CC_Chg')]
+            charge_current = abs(charge_data['Current(mA)'].mean()) if not charge_data.empty else None
+
+            # Get discharge current (average during CC_DChg phase)
+            discharge_data = df[(df['Cycle'] == cycle) & (df['Status'] == 'CC_DChg')]
+            discharge_current = abs(discharge_data['Current(mA)'].mean()) if not discharge_data.empty else None
+
+            return charge_current, discharge_current
+
+        except Exception as e:
+            logging.debug(f"Error extracting current data for cycle {cycle}: {e}")
+            return None, None
+
     def _generate_complete_analysis(self):
         """Generate complete analysis for all cycles in selected files."""
         if not self.selected_files:
@@ -369,6 +398,7 @@ class FileSelector:
         # Import the complete analysis function
         from main import process_all_cycles_for_complete_analysis
         from common.project_imports import CellDatabase
+        from data_loader import DataLoader
 
         # Show processing message and disable button
         old_text = self.generate_complete_btn.cget("text")
@@ -378,6 +408,10 @@ class FileSelector:
         try:
             # Get database instance
             db = CellDatabase.get_instance()
+
+            # Store raw data for C-rate calculations
+            self._raw_data_loader = DataLoader()
+            self._raw_data_loader.load_files(self.selected_files)
 
             # Process all cycles
             logging.debug("FILE_SELECTOR. Starting complete analysis generation")
@@ -435,6 +469,18 @@ class FileSelector:
                 key = (file_key, cycle_key)
                 dqdv_dict[key] = stat
 
+        # Build C-rate reference data from raw data
+        crate_references = {}
+        if hasattr(self, '_raw_data_loader'):
+            for file_path in self._raw_data_loader.get_cached_files():
+                df = self._raw_data_loader.get_data(file_path)
+                if df is not None:
+                    from data_import import extract_cell_id
+                    from pathlib import Path
+                    cell_id = extract_cell_id(Path(file_path).stem)
+                    ref_charge_current, ref_discharge_current = self._extract_current_data(df, 1)
+                    crate_references[cell_id] = (ref_charge_current, ref_discharge_current)
+
         consolidated_data = []
 
         # Process each row in features_df
@@ -445,6 +491,32 @@ class FileSelector:
 
             # Get corresponding dqdv data
             dqdv_data = dqdv_dict.get(lookup_key, {})
+
+            # Calculate C-rates
+            charge_crate_str = "N/A"
+            discharge_crate_str = "N/A"
+
+            if cell_id in crate_references and hasattr(self, '_raw_data_loader'):
+                ref_charge_current, ref_discharge_current = crate_references[cell_id]
+
+                # Find the raw data for this cell and cycle
+                for file_path in self._raw_data_loader.get_cached_files():
+                    df = self._raw_data_loader.get_data(file_path)
+                    if df is not None:
+                        from data_import import extract_cell_id
+                        from pathlib import Path
+                        if extract_cell_id(Path(file_path).stem) == cell_id:
+                            cycle_charge_current, cycle_discharge_current = self._extract_current_data(df, cycle)
+
+                            # Calculate C-rates
+                            if ref_charge_current and cycle_charge_current:
+                                charge_crate = (cycle_charge_current / ref_charge_current) * 0.1
+                                charge_crate_str = f"{charge_crate:.2f}"
+
+                            if ref_discharge_current and cycle_discharge_current:
+                                discharge_crate = (cycle_discharge_current / ref_discharge_current) * 0.1
+                                discharge_crate_str = f"{discharge_crate:.2f}"
+                            break
 
             # Get plateau values for percentage calculations
             charge_1st = dqdv_data.get('Charge 1st Plateau (mAh/g)', 0) if dqdv_data else 0
@@ -464,6 +536,9 @@ class FileSelector:
             consolidated_row = {
                 "Cell ID": cell_id,
                 "Cycle": cycle,
+                # C-rate data (1 decimal place)
+                "Charge C-Rate": charge_crate_str,
+                "Discharge C-Rate": discharge_crate_str,
                 # Capacity metrics (1 decimal)
                 "Charge Cap (mAh)": f"{float(row.get('Charge Capacity (mAh)', 0)):.1f}" if pd.notnull(
                     row.get('Charge Capacity (mAh)')) else "N/A",
