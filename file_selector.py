@@ -264,7 +264,8 @@ class FileSelector:
         # Add explanation
         explanation = ttk.Label(
             complete_tab,
-            text="This tab displays all extracted metrics in one consolidated table.\n"
+            text="This tab displays all extracted metrics for ALL cycles in one consolidated table.\n"
+                 "Click 'Generate Complete Analysis' to process all cycles from selected files.\n"
                  "Statistics are calculated separately for each cycle.",
             justify=tk.CENTER
         )
@@ -276,6 +277,7 @@ class FileSelector:
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
 
+        # ADD THE MISSING TABLE CREATION CODE:
         # Define complete metrics columns in grouped order
         self.complete_columns = [
             "Cell ID", "Cycle",
@@ -326,12 +328,21 @@ class FileSelector:
         y_scrollbar.grid(row=0, column=1, sticky="ns")
         x_scrollbar.grid(row=1, column=0, sticky="ew")
 
-        # Add export button frame
+        # Add export button frame with complete analysis button
         export_frame = ttk.Frame(complete_tab)
         export_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
         export_frame.columnconfigure(0, weight=1)
 
-        # Copy and Export buttons
+        # Generate Complete Analysis button
+        self.generate_complete_btn = ttk.Button(
+            export_frame,
+            text="Generate Complete Analysis",
+            command=self._generate_complete_analysis,
+            state="disabled"  # Initially disabled
+        )
+        self.generate_complete_btn.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+
+        # Copy and Export buttons (moved to right)
         ttk.Button(
             export_frame,
             text="Copy Table",
@@ -345,6 +356,61 @@ class FileSelector:
         ).grid(row=0, column=2, sticky="e", padx=5, pady=5)
 
         return complete_tab
+
+    def _generate_complete_analysis(self):
+        """Generate complete analysis for all cycles in selected files."""
+        if not self.selected_files:
+            messagebox.showwarning(
+                "No Files Selected",
+                "Please select files before generating complete analysis."
+            )
+            return
+
+        # Import the complete analysis function
+        from main import process_all_cycles_for_complete_analysis
+        from common.project_imports import CellDatabase
+
+        # Show processing message and disable button
+        old_text = self.generate_complete_btn.cget("text")
+        self.generate_complete_btn.config(text="Processing...", state="disabled")
+        self.root.update()
+
+        try:
+            # Get database instance
+            db = CellDatabase.get_instance()
+
+            # Process all cycles
+            logging.debug("FILE_SELECTOR. Starting complete analysis generation")
+            complete_features_df, complete_dqdv_stats = process_all_cycles_for_complete_analysis(
+                self.selected_files, db
+            )
+
+            if not complete_features_df.empty:
+                # Update the complete analysis table
+                self._update_complete_analysis_table(complete_features_df, complete_dqdv_stats)
+
+                # Show success message
+                total_cycles = len(complete_features_df['Cycle'].unique())
+                total_files = len(complete_features_df['cell ID'].unique())
+                messagebox.showinfo(
+                    "Complete Analysis Generated",
+                    f"Successfully processed {total_cycles} cycles from {total_files} files.\n"
+                    f"Total records: {len(complete_features_df)}"
+                )
+                logging.debug(f"FILE_SELECTOR. Complete analysis generated: {len(complete_features_df)} records")
+            else:
+                messagebox.showwarning(
+                    "No Data Generated",
+                    "No data was generated for complete analysis. Check file selection and data quality."
+                )
+
+        except Exception as e:
+            logging.error(f"FILE_SELECTOR. Error generating complete analysis: {e}")
+            messagebox.showerror("Processing Error", f"Error generating complete analysis: {str(e)}")
+
+        finally:
+            # Re-enable button
+            self.generate_complete_btn.config(text=old_text, state="normal")
 
     def _consolidate_all_metrics(self, features_df, dqdv_stats):
         """
@@ -446,7 +512,7 @@ class FileSelector:
         return consolidated_data
 
     def _update_complete_analysis_table(self, features_df, dqdv_stats):
-        """Update the complete analysis table with all metrics and statistics."""
+        """Update the complete analysis table with all metrics and statistics for all cycles."""
         # Clear existing items
         for item in self.complete_table.get_children():
             self.complete_table.delete(item)
@@ -460,7 +526,7 @@ class FileSelector:
         if not consolidated_data:
             return
 
-        # Group data by cycle for statistics calculation
+        # CHANGED: Get all unique cycles from the data instead of selected cycles
         cycles = sorted(set(row['Cycle'] for row in consolidated_data))
 
         for cycle in cycles:
@@ -964,6 +1030,9 @@ class FileSelector:
             if full_path not in self.selected_files:
                 self.selected_files.append(full_path)
                 self.selected_listbox.insert(tk.END, file)
+        # Enable complete analysis button if files are selected
+        if hasattr(self, 'generate_complete_btn'):
+            self.generate_complete_btn.config(state="normal" if self.selected_files else "disabled")
 
     def _remove_selected_files(self):
         """Remove selected files from the selected list."""
@@ -975,7 +1044,9 @@ class FileSelector:
             if full_path in self.selected_files:
                 self.selected_files.remove(full_path)
             self.selected_listbox.delete(i)
-
+        # Update complete analysis button state
+        if hasattr(self, 'generate_complete_btn'):
+            self.generate_complete_btn.config(state="normal" if self.selected_files else "disabled")
 
     def _process_files(self, callback):
         """Process the selected files using the provided callback function."""
@@ -1039,6 +1110,10 @@ class FileSelector:
         self.selected_listbox.delete(0, tk.END)
 
         messagebox.showinfo("Selection Cleared", "File selection has been cleared.")
+
+        # Disable complete analysis button
+        if hasattr(self, 'generate_complete_btn'):
+            self.generate_complete_btn.config(state="disabled")
 
     def _update_status_display(self):
         """Update the status label with the current file selection count."""

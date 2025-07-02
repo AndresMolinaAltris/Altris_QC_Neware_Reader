@@ -224,6 +224,107 @@ def process_files(ndax_file_list,
         logging.debug("MAIN.No features extracted, process_files func finished.")
         return pd.DataFrame()
 
+def process_all_cycles_for_complete_analysis(ndax_file_list,
+                                             db):
+    """
+    Process all cycles from all files for complete analysis.
+    Extracts both basic features and dQ/dV data for all available cycles.
+
+    Args:
+        ndax_file_list: List of NDAX files to process
+        db: CellDatabase instance
+
+    Returns:
+        Tuple of (features_df, dqdv_stats) for all cycles
+    """
+    logging.debug("MAIN. process_all_cycles_for_complete_analysis started")
+
+    # Initialize DataLoader and load all files upfront
+    data_loader = DataLoader()
+    logging.debug("MAIN. Loading all NDAX files for complete analysis...")
+    data_loader.load_files(ndax_file_list)
+
+    # Log cache info
+    cache_info = data_loader.get_cache_info()
+    logging.debug(f"MAIN. Complete analysis DataLoader cache: {cache_info['cached_files']} files, "
+                  f"{cache_info['total_rows']} total rows, "
+                  f"{cache_info['memory_usage_mb']:.1f} MB")
+
+    # Initialize containers for results
+    all_features = []
+    all_dqdv_stats = []
+
+    # Process each file using cached data
+    for file in ndax_file_list:
+        # Skip files that failed to load
+        if not data_loader.is_loaded(file):
+            logging.warning(f"MAIN. Skipping file {os.path.basename(file)} - not loaded")
+            continue
+
+        filename_stem = Path(file).stem
+        cell_ID = extract_cell_id(filename_stem)
+        sample_name = extract_sample_name(filename_stem)
+
+        # Get data from DataLoader
+        df = data_loader.get_data(file)
+        if df is None:
+            logging.warning(f"MAIN. No data available for {filename_stem}")
+            continue
+
+        # Extract active mass
+        mass = db.get_mass(cell_ID)
+        if mass is None or mass <= 0:
+            logging.warning(f'MAIN. No mass found for cell {cell_ID}, using 1.0g')
+            mass = 1.0
+
+        # Get all unique cycles from this file
+        all_cycles = sorted(df['Cycle'].unique())
+        logging.debug(f"MAIN. Processing {len(all_cycles)} cycles for {filename_stem}: {all_cycles}")
+
+        # Create feature and dqdv objects once per file
+        features_obj = Features(file)
+        dqdvanalysis_obj = DQDVAnalysis(file)
+
+        # Process each cycle
+        for cycle in all_cycles:
+            logging.debug(f"MAIN. Extracting complete analysis for {filename_stem}, cycle {cycle}")
+
+            try:
+                # Extract basic features
+                feature_df = features_obj.extract(df, cycle, mass)
+
+                # Add file information
+                feature_df["cell ID"] = cell_ID
+                feature_df["sample name"] = sample_name
+                feature_df["Cycle"] = cycle
+                feature_df["mass (g)"] = mass
+                feature_df["file"] = filename_stem
+
+                # Append to results
+                all_features.append(feature_df)
+
+                # Extract dQ/dV data and plateau statistics
+                plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass)
+                if plateau_data:
+                    plateau_data["File"] = cell_ID
+                    plateau_data["Cycle"] = cycle
+                    all_dqdv_stats.append(plateau_data)
+
+            except Exception as e:
+                logging.warning(f"MAIN. Error processing {filename_stem}, cycle {cycle}: {e}")
+
+    # Clean up DataLoader
+    data_loader.clear_cache()
+
+    # Combine all results
+    if all_features:
+        final_features_df = pd.concat(all_features, ignore_index=True)
+        logging.debug(f"MAIN. Complete analysis finished: {len(final_features_df)} total feature records")
+        return final_features_df, all_dqdv_stats
+    else:
+        logging.debug("MAIN. No features extracted for complete analysis")
+        return pd.DataFrame(), []
+
 def main():
     """
     Main entry point for the Altris QC Neware Reader.
