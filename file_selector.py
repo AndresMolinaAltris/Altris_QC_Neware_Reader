@@ -2,7 +2,6 @@ from common.imports import (
     tk, filedialog, ttk, messagebox, os, pd,
     logging, FigureCanvasTkAgg, Figure, plt, re
 )
-#from common.project_imports import DataLoader
 from data_loader import DataLoader # For some reason I cannot import this from common imports
 
 class CycleSelectionDialog(tk.Toplevel):
@@ -113,12 +112,6 @@ class FileSelector:
         self.canvas = None
         self.selected_cycles = [1, 2, 3]  # Default cycles to display
 
-        # Add separate voltage range settings for charge and discharge
-        self.charge_voltage_range_min = 3.1  # Default min voltage for charge
-        self.charge_voltage_range_max = 3.3  # Default max voltage for charge
-        self.discharge_voltage_range_min = 3.1  # Default min voltage for discharge
-        self.discharge_voltage_range_max = 3.3  # Default max voltage for discharge
-        self.voltage_panel_expanded = False  # Start collapsed
 
     def _open_cycle_selection(self):
         """Open dialog to select which cycles to display."""
@@ -812,8 +805,6 @@ class FileSelector:
         # Configure the grid for the dQ/dV tab
         dqdv_tab.columnconfigure(0, weight=1)
         dqdv_tab.rowconfigure(0, weight=3)  # Main plot area (larger)
-        dqdv_tab.rowconfigure(1, weight=0)  # Voltage range panel (no expansion)
-        dqdv_tab.rowconfigure(2, weight=1)  # Statistics area (smaller but still expandable)
 
         # Create plot area
         plot_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Plot Preview")
@@ -839,12 +830,9 @@ class FileSelector:
         self.dqdv_canvas.draw()
         self.dqdv_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Create voltage range configuration panel
-        self._create_voltage_range_panel(dqdv_tab)
-
         # Create statistics area
         stats_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Statistics")
-        stats_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        stats_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
 
         # Use grid layout for better control in the stats frame
         stats_frame.columnconfigure(0, weight=1)  # For table area
@@ -936,238 +924,6 @@ class FileSelector:
 
         return dqdv_tab
 
-    def _create_voltage_range_panel(self, parent):
-        """Create a collapsible panel for voltage range configuration with separate charge/discharge controls."""
-        # Main frame for the voltage range panel
-        self.voltage_range_frame = ttk.LabelFrame(parent, text="")
-        self.voltage_range_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=2)
-        self.voltage_range_frame.columnconfigure(1, weight=1)
-
-        # Create toggle button and title frame
-        header_frame = ttk.Frame(self.voltage_range_frame)
-        header_frame.pack(fill=tk.X, padx=5, pady=2)
-
-        # Toggle button (starts with ►)
-        self.voltage_toggle_btn = ttk.Button(
-            header_frame,
-            text="► Voltage Range Settings",
-            command=self._toggle_voltage_panel,
-            width=25
-        )
-        self.voltage_toggle_btn.pack(side=tk.LEFT)
-
-        # Content frame (initially hidden)
-        self.voltage_content_frame = ttk.Frame(self.voltage_range_frame)
-        # Don't pack it initially (collapsed state)
-
-        # Configure content frame grid
-        self.voltage_content_frame.columnconfigure(1, weight=1)
-        self.voltage_content_frame.columnconfigure(3, weight=1)
-
-        # CHARGE voltage range inputs (Row 0)
-        ttk.Label(self.voltage_content_frame, text="Charge Range:", font=('', 9, 'bold')).grid(
-            row=0, column=0, columnspan=4, padx=5, pady=(5, 2), sticky="w"
-        )
-
-        ttk.Label(self.voltage_content_frame, text="Min Voltage (V):").grid(
-            row=1, column=0, padx=5, pady=2, sticky="w"
-        )
-
-        self.charge_min_voltage_var = tk.DoubleVar(value=self.charge_voltage_range_min)
-        self.charge_min_voltage_entry = ttk.Entry(
-            self.voltage_content_frame,
-            textvariable=self.charge_min_voltage_var,
-            width=8
-        )
-        self.charge_min_voltage_entry.grid(row=1, column=1, padx=5, pady=2, sticky="w")
-
-        ttk.Label(self.voltage_content_frame, text="Max Voltage (V):").grid(
-            row=1, column=2, padx=5, pady=2, sticky="w"
-        )
-
-        self.charge_max_voltage_var = tk.DoubleVar(value=self.charge_voltage_range_max)
-        self.charge_max_voltage_entry = ttk.Entry(
-            self.voltage_content_frame,
-            textvariable=self.charge_max_voltage_var,
-            width=8
-        )
-        self.charge_max_voltage_entry.grid(row=1, column=3, padx=5, pady=2, sticky="w")
-
-        # DISCHARGE voltage range inputs (Row 2-3)
-        ttk.Label(self.voltage_content_frame, text="Discharge Range:", font=('', 9, 'bold')).grid(
-            row=2, column=0, columnspan=4, padx=5, pady=(10, 2), sticky="w"
-        )
-
-        ttk.Label(self.voltage_content_frame, text="Min Voltage (V):").grid(
-            row=3, column=0, padx=5, pady=2, sticky="w"
-        )
-
-        self.discharge_min_voltage_var = tk.DoubleVar(value=self.discharge_voltage_range_min)
-        self.discharge_min_voltage_entry = ttk.Entry(
-            self.voltage_content_frame,
-            textvariable=self.discharge_min_voltage_var,
-            width=8
-        )
-        self.discharge_min_voltage_entry.grid(row=3, column=1, padx=5, pady=2, sticky="w")
-
-        ttk.Label(self.voltage_content_frame, text="Max Voltage (V):").grid(
-            row=3, column=2, padx=5, pady=2, sticky="w"
-        )
-
-        self.discharge_max_voltage_var = tk.DoubleVar(value=self.discharge_voltage_range_max)
-        self.discharge_max_voltage_entry = ttk.Entry(
-            self.voltage_content_frame,
-            textvariable=self.discharge_max_voltage_var,
-            width=8
-        )
-        self.discharge_max_voltage_entry.grid(row=3, column=3, padx=5, pady=2, sticky="w")
-
-        # Buttons frame (Row 4)
-        button_frame = ttk.Frame(self.voltage_content_frame)
-        button_frame.grid(row=4, column=0, columnspan=4, pady=10)
-
-        # Apply button (initially disabled)
-        self.voltage_apply_btn = ttk.Button(
-            button_frame,
-            text="Apply",
-            command=self._apply_voltage_range,
-            state="disabled"
-        )
-        self.voltage_apply_btn.pack(side=tk.LEFT, padx=5)
-
-        # Reset button
-        ttk.Button(
-            button_frame,
-            text="Reset to Default",
-            command=self._reset_voltage_range
-        ).pack(side=tk.LEFT, padx=5)
-
-    def _toggle_voltage_panel(self):
-        """Toggle the visibility of the voltage range configuration panel."""
-        if self.voltage_panel_expanded:
-            # Collapse panel
-            self.voltage_content_frame.pack_forget()
-            self.voltage_toggle_btn.config(text="► Voltage Range Settings")
-            self.voltage_panel_expanded = False
-        else:
-            # Expand panel
-            self.voltage_content_frame.pack(fill=tk.X, padx=5, pady=5)
-            self.voltage_toggle_btn.config(text="▼ Voltage Range Settings")
-            self.voltage_panel_expanded = True
-
-    def _validate_voltage_range(self):
-        """Validate both charge and discharge voltage range inputs."""
-        try:
-            # Validate charge range
-            charge_min = self.charge_min_voltage_var.get()
-            charge_max = self.charge_max_voltage_var.get()
-
-            # Validate discharge range
-            discharge_min = self.discharge_min_voltage_var.get()
-            discharge_max = self.discharge_max_voltage_var.get()
-
-            # Check if min < max for both ranges
-            if charge_min >= charge_max:
-                messagebox.showerror(
-                    "Invalid Range",
-                    "Charge minimum voltage must be less than maximum voltage."
-                )
-                return False
-
-            if discharge_min >= discharge_max:
-                messagebox.showerror(
-                    "Invalid Range",
-                    "Discharge minimum voltage must be less than maximum voltage."
-                )
-                return False
-
-            # Check for negative values
-            if any(val < 0 for val in [charge_min, charge_max, discharge_min, discharge_max]):
-                messagebox.showerror(
-                    "Invalid Range",
-                    "Voltage values must be positive."
-                )
-                return False
-
-            # Check for unreasonably high values
-            if any(val > 5.0 for val in [charge_max, discharge_max]):
-                messagebox.showerror(
-                    "Invalid Range",
-                    "Maximum voltage seems unusually high (>5.0V). Please verify."
-                )
-                return False
-
-            return True
-
-        except tk.TclError:
-            messagebox.showerror(
-                "Invalid Input",
-                "Please enter valid numeric values for voltage ranges."
-            )
-            return False
-
-    def _apply_voltage_range(self):
-        """Apply the new voltage ranges and reprocess files."""
-        if not self._validate_voltage_range():
-            return
-
-        # Update stored voltage ranges
-        self.charge_voltage_range_min = self.charge_min_voltage_var.get()
-        self.charge_voltage_range_max = self.charge_max_voltage_var.get()
-        self.discharge_voltage_range_min = self.discharge_min_voltage_var.get()
-        self.discharge_voltage_range_max = self.discharge_max_voltage_var.get()
-
-        # Show processing message
-        old_status = self.status_var.get()
-        self.status_var.set(
-            f"Recalculating with charge range {self.charge_voltage_range_min:.1f}-{self.charge_voltage_range_max:.1f}V, "
-            f"discharge range {self.discharge_voltage_range_min:.1f}-{self.discharge_voltage_range_max:.1f}V..."
-        )
-        self.root.update()
-
-        # Reprocess files if we have selected files and a callback
-        if self.selected_files and hasattr(self, '_last_callback') and self._last_callback:
-            try:
-                # Call the processing function with updated voltage ranges
-                features_df = self._last_callback(self.selected_files)
-
-                # Update tables
-                if features_df is not None and not features_df.empty:
-                    self._update_analysis_table(features_df)
-
-                    # Update complete analysis table if available
-                    if hasattr(self, 'complete_table'):
-                        dqdv_stats_for_complete = getattr(self, '_last_dqdv_stats', [])
-                        self._update_complete_analysis_table(features_df, dqdv_stats_for_complete)
-
-                # Update status
-                cycle_text = ", ".join(str(c) for c in self.selected_cycles)
-                self.status_var.set(
-                    f"Recalculated with separate voltage ranges. Cycles: {cycle_text}"
-                )
-
-            except Exception as e:
-                logging.debug(f"Error during voltage range recalculation: {e}")
-                messagebox.showerror("Processing Error", f"Error during recalculation: {str(e)}")
-                self.status_var.set(old_status)
-        else:
-            self.status_var.set("Voltage ranges updated. Process files to see changes.")
-
-    def _reset_voltage_range(self):
-        """Reset both charge and discharge voltage ranges to default values."""
-        self.charge_min_voltage_var.set(3.1)
-        self.charge_max_voltage_var.set(3.3)
-        self.discharge_min_voltage_var.set(3.1)
-        self.discharge_max_voltage_var.set(3.3)
-
-    def _update_voltage_apply_button(self):
-        """Enable/disable the voltage apply button based on file selection."""
-        if hasattr(self, 'voltage_apply_btn'):
-            if self.selected_files:
-                self.voltage_apply_btn.config(state="normal")
-            else:
-                self.voltage_apply_btn.config(state="disabled")
-
     def _browse_directory(self):
         """Open dialog to select a directory and update the file list."""
         dir_path = filedialog.askdirectory(initialdir=self.current_dir.get())
@@ -1209,9 +965,6 @@ class FileSelector:
                 self.selected_files.append(full_path)
                 self.selected_listbox.insert(tk.END, file)
 
-        # ADD THIS LINE:
-        self._update_voltage_apply_button()
-
     def _remove_selected_files(self):
         """Remove selected files from the selected list."""
         selected_indices = self.selected_listbox.curselection()
@@ -1223,8 +976,6 @@ class FileSelector:
                 self.selected_files.remove(full_path)
             self.selected_listbox.delete(i)
 
-        # ADD THIS LINE:
-        self._update_voltage_apply_button()
 
     def _process_files(self, callback):
         """Process the selected files using the provided callback function."""
@@ -1286,9 +1037,6 @@ class FileSelector:
         """Clear the current file selection."""
         self.selected_files = []
         self.selected_listbox.delete(0, tk.END)
-
-        # ADD THIS LINE:
-        self._update_voltage_apply_button()
 
         messagebox.showinfo("Selection Cleared", "File selection has been cleared.")
 

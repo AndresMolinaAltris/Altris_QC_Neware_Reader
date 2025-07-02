@@ -23,9 +23,7 @@ def process_files(ndax_file_list,
                   db,
                   selected_cycles=None,
                   enable_plotting=True,
-                  gui_callback=None,
-                  charge_voltage_range=(3.1, 3.3),   # NEW: separate charge range
-                  discharge_voltage_range=(3.1, 3.3)): # NEW: separate discharge range
+                  gui_callback=None):
     """
     Process a list of NDAX files and return the extracted features dataframe.
 
@@ -35,15 +33,10 @@ def process_files(ndax_file_list,
         selected_cycles: List of 3 cycle numbers to process and display (default: [1, 2, 3])
         enable_plotting: Whether to generate plots
         gui_callback: Callback function for updating GUI
-        charge_voltage_range: Tuple with min and max voltage for charge inflection point detection
-        discharge_voltage_range: Tuple with min and max voltage for discharge inflection point detection
-
     Returns:
         DataFrame containing extracted features
     """
     logging.debug("MAIN. process_files started")
-    logging.debug(f"MAIN. Using charge voltage range: {charge_voltage_range}")
-    logging.debug(f"MAIN. Using discharge voltage range: {discharge_voltage_range}")
 
 
     # Use default cycles if none provided
@@ -163,9 +156,6 @@ def process_files(ndax_file_list,
 
                 # Generate dQ/dV plots
                 logging.debug("MAIN.Generating dQ/dV plots...")
-                # Store both voltage ranges in plotter for transition voltage extraction
-                plotter._gui_charge_voltage_range = charge_voltage_range
-                plotter._gui_discharge_voltage_range = discharge_voltage_range
 
                 dqdv_fig = plotter.plot_dqdv_curves_with_loader(
                     data_loader,
@@ -194,9 +184,10 @@ def process_files(ndax_file_list,
                         # Extract plateau statistics using DQDVAnalysis batch method with separate voltage ranges
                         dqdv_analyzer = DQDVAnalysis("plateau_extractor")
                         plateau_stats = dqdv_analyzer.extract_plateaus_batch(
-                            data_loader, db, ndax_file_list, selected_cycles,
-                            charge_voltage_range, discharge_voltage_range  # PASS BOTH RANGES
-                        )
+                            data_loader,
+                            db,
+                            ndax_file_list,
+                            selected_cycles)
 
                         logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
                         # Call the update method
@@ -301,28 +292,13 @@ def main():
         selected_cycles = file_selector_instance.selected_cycles
         logging.debug(f"MAIN.Using selected cycles: {selected_cycles}")
 
-        # Get separate voltage ranges from the file selector
-        charge_voltage_range = (
-            file_selector_instance.charge_voltage_range_min,
-            file_selector_instance.charge_voltage_range_max
-        )
-        discharge_voltage_range = (
-            file_selector_instance.discharge_voltage_range_min,
-            file_selector_instance.discharge_voltage_range_max
-        )
-        logging.debug(f"MAIN.Using charge voltage range: {charge_voltage_range}")
-        logging.debug(f"MAIN.Using discharge voltage range: {discharge_voltage_range}")
-
         # Process files with plotting enabled
         features_df = process_files(
             ndax_file_list,
             db,
             selected_cycles=selected_cycles,  # Pass the selected cycles
             enable_plotting=enable_plotting,
-            gui_callback=file_selector_instance.update_plot,
-            charge_voltage_range=charge_voltage_range,  # PASS CHARGE RANGE
-            discharge_voltage_range=discharge_voltage_range  # PASS DISCHARGE RANGE
-        )
+            gui_callback=file_selector_instance.update_plot)
 
         if not features_df.empty:
             all_processed_features.append(features_df)

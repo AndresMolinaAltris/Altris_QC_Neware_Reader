@@ -320,8 +320,7 @@ class DQDVAnalysis:
             avg_time_step = time_steps.mean()
 
             # Detect if this is high C-rate discharge (fast acquisition)
-            is_high_crate = avg_time_step < 6.0  # Threshold of 6 seconds based on analysis of the data
-
+            is_high_crate = avg_time_step < 1.0  # Threshold of 6 seconds based on analysis of the data
             if is_high_crate:
                 # For high C-rate discharge, skip smoothing entirely
                 skip_smoothing = True
@@ -541,8 +540,12 @@ class DQDVAnalysis:
             print(f"Moving average smoothing failed: {e}")
             return data
 
-    def extract_plateaus(self, df, cycle, mass=1.0, transition_voltage=None, charge_voltage_range=(3.1, 3.3),
-                         discharge_voltage_range=(3.1, 3.3)):
+    def extract_plateaus(self, df,
+                         cycle,
+                         mass=1.0,
+                         transition_voltage=None,
+                         charge_voltage_range=(2.8, 3.5),
+                         discharge_voltage_range=(2.8, 3.5)):
         """
         Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
 
@@ -672,8 +675,13 @@ class DQDVAnalysis:
                 "Discharge Total (mAh/g)": np.nan
             }
 
-    def extract_plateaus_batch(self, data_loader, db, file_list, selected_cycles=None, charge_voltage_range=(3.1, 3.3),
-                               discharge_voltage_range=(3.1, 3.3)):
+    def extract_plateaus_batch(self,
+                               data_loader,
+                               db,
+                               file_list,
+                               selected_cycles=None,
+                               charge_voltage_range=(2.8, 3.5),
+                               discharge_voltage_range=(2.8, 3.5)):
         """
         Extract plateau capacity statistics from DataLoader cache for multiple files and cycles.
 
@@ -744,7 +752,9 @@ class DQDVAnalysis:
         logging.debug("DQDVAnalysis.extract_plateaus_batch finished")
         return stats
 
-    def find_transition_voltage(self, df, cycle, voltage_range=(3.1, 3.3)):
+    def find_transition_voltage(self, df,
+                                cycle,
+                                voltage_range=(2.8, 3.5)):
         """
         Find transition voltage where dQ/dV is flattest (closest to zero).
 
@@ -790,9 +800,14 @@ class DQDVAnalysis:
 
         return result
 
-    def find_inflection_point(self, df, cycle, charge_voltage_range=(3.1, 3.3), discharge_voltage_range=(3.1, 3.3)):
+    def find_inflection_point(self,
+                              df,
+                              cycle,
+                              charge_voltage_range=(2.8, 3.5),
+                              discharge_voltage_range=(2.8, 3.5)):
         """
         Find inflection point using dV/dQ gradient analysis with peak detection.
+        Uses capacity constraints (35-65% of total capacity) followed by voltage range filtering.
 
         Args:
             df: DataFrame with battery data
@@ -838,31 +853,61 @@ class DQDVAnalysis:
             volt = seg_data['Voltage'].values
             cap = seg_data[capacity_col].values
 
-            # Calculate dV/dQ derivative
-            dV_dQ = np.gradient(volt, cap)
+            # STEP 1: Apply capacity constraint (35-65% of total capacity change)
+            total_capacity_change = cap[-1] - cap[0]
+            capacity_35_percent = cap[0] + 0.35 * total_capacity_change
+            capacity_65_percent = cap[0] + 0.65 * total_capacity_change
 
-            # Apply smoothing with 15-point moving average
-            dV_dQ_smooth = np.convolve(dV_dQ, np.ones(15) / 15, mode='same')
+            # Create capacity mask
+            if status == 'CC_Chg':
+                # For charge, capacity increases
+                capacity_mask = (cap >= capacity_35_percent) & (cap <= capacity_65_percent)
+            else:
+                # For discharge, capacity increases but we want the middle region
+                capacity_mask = (cap >= capacity_35_percent) & (cap <= capacity_65_percent)
 
-            # Filter to the specific voltage range for this curve type
-            mask = (volt >= voltage_range[0]) & (volt <= voltage_range[1]) # This line needs to change to capacity limits
-            valid_indices = np.where(mask)[0]
+            capacity_indices = np.where(capacity_mask)[0]
 
-            if len(valid_indices) == 0:
-                logging.debug(f"No data in voltage range {voltage_range} for {status}")
+            if len(capacity_indices) < 5:
+                logging.debug(f"Insufficient data after capacity constraint for {status}, using fallback voltage 3.2V")
+                result[f'{key_prefix}_inflection_voltage'] = 3.2
                 continue
 
-            # Extract data in the voltage range
+            # Apply capacity constraint to data
+            cap_constrained = cap[capacity_indices]
+            volt_constrained = volt[capacity_indices]
+
+            # Calculate dV/dQ derivative on capacity-constrained data
+            dV_dQ = np.gradient(volt_constrained, cap_constrained)
+
+            # Apply smoothing with 15-point moving average
+            smoothing_window = min(15, len(dV_dQ))
+            if smoothing_window >= 3:
+                dV_dQ_smooth = np.convolve(dV_dQ, np.ones(smoothing_window) / smoothing_window, mode='same')
+            else:
+                dV_dQ_smooth = dV_dQ
+
+            # STEP 2: Apply voltage range filter within capacity-constrained data
+            voltage_mask = (volt_constrained >= voltage_range[0]) & (volt_constrained <= voltage_range[1])
+            valid_indices = np.where(voltage_mask)[0]
+
+            if len(valid_indices) < 5:
+                logging.debug(f"Insufficient data after voltage constraint for {status}, using fallback voltage 3.2V")
+                result[f'{key_prefix}_inflection_voltage'] = 3.2
+                continue
+
+            # Extract data in both capacity and voltage ranges
             sub_dv = dV_dQ_smooth[valid_indices]
-            sub_cap = cap[valid_indices]
-            sub_volt = volt[valid_indices]
+            sub_cap = cap_constrained[valid_indices]
+            sub_volt = volt_constrained[valid_indices]
 
-            # Exclude edges (5% from each end)
-            min_idx = int(len(sub_dv) * 0.05)
-            max_idx = int(len(sub_dv) * 0.95)
+            # Exclude edges (5% from each end) of the final filtered data
+            min_idx = max(0, int(len(sub_dv) * 0.05))
+            max_idx = min(len(sub_dv), int(len(sub_dv) * 0.95))
 
-            if max_idx <= min_idx:
-                logging.debug(f"Insufficient data after edge exclusion for {status}")
+            if max_idx <= min_idx + 2:
+                logging.debug(f"Insufficient data after edge exclusion for {status}, using fallback voltage 3.2V")
+                result[f'{key_prefix}_inflection_voltage'] = 3.2
                 continue
 
             # Find peaks in derivative
@@ -890,12 +935,14 @@ class DQDVAnalysis:
                     result[f'{key_prefix}_inflection_capacity'] = float(inflection_capacity)
 
                     logging.debug(
-                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh using range {voltage_range}")
+                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh using capacity constraint (35-65%) + voltage range {voltage_range}")
                 else:
-                    logging.debug(f"No peaks found for {status} in cycle {cycle} within range {voltage_range}")
+                    logging.debug(f"No peaks found for {status} in cycle {cycle}, using fallback voltage 3.2V")
+                    result[f'{key_prefix}_inflection_voltage'] = 3.2
 
             except Exception as e:
-                logging.debug(f"Error in peak detection for {status}: {e}")
+                logging.debug(f"Error in peak detection for {status}: {e}, using fallback voltage 3.2V")
+                result[f'{key_prefix}_inflection_voltage'] = 3.2
                 continue
 
         logging.debug("DQDVAnalysis.find_inflection_point finished")
