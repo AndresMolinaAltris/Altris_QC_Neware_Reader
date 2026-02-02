@@ -48,156 +48,92 @@ class Features:
         return pd.DataFrame(features, index=[0])
 
     def extract_internal_resistance_soc_0(self, df, features, cycle):
-        """
-        Extracts internal resistance at SOC = 0% from the dataset.
-        For cycle 1: looks at step 1 (initial rest)
-        For cycle 2+: dynamically finds rest step that occurs after discharge
-        """
+        label = "Internal Resistance at SOC 0 (Ohms)"
         try:
-            if int(cycle) == 1:
-                # For cycle 1, SOC 0% is at step 1 (initial rest)
-                idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 1)
-            else:
-                # For cycles 2+, find rest step that occurs after discharge
-                cycle_data = df[df["Cycle"] == int(cycle)].copy()
-
-                if cycle_data.empty:
-                    features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                    return
-
-                # Sort by index to maintain chronological order
-                cycle_data = cycle_data.sort_index()
-
-                # Find rest steps that are preceded by discharge steps
-                rest_steps = []
-                prev_status = None
-
-                for _, row in cycle_data.iterrows():
-                    current_status = row["Status"]
-                    current_step = row["Step"]
-
-                    # If current is rest and previous was discharge, this is SOC 0%
-                    if (current_status == "Rest" and
-                            prev_status is not None and
-                            "DChg" in prev_status):
-                        rest_steps.append(current_step)
-
-                    prev_status = current_status
-
-                if not rest_steps:
-                    features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                    return
-
-                # Use the last rest step after discharge (in case there are multiple)
-                target_step = rest_steps[-1]
-                idx = ((df["Status"] == "Rest") &
-                       (df["Cycle"] == int(cycle)) &
-                       (df["Step"] == target_step))
-
-            if not idx.any():
-                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                return
-
-            # Find the last index of the rest period
-            rest_indices = df[idx].index
-            if len(rest_indices) == 0:
-                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                return
-
-            index = rest_indices[-1]
-
-            # Check if we have a next data point for calculation
-            if index + 1 >= len(df):
-                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                return
-
-            ocv = round(df["Voltage"][index], 4)
-            ocv_dV = round(df["Voltage"][index + 1], 4)
-            delta_current = abs(df["Current(mA)"][index + 1] - df["Current(mA)"][index])
-
-            if delta_current == 0:
-                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                return
-
-            delta_V = abs(ocv_dV - ocv)
-            internal_resistance = delta_V / (delta_current / 1000)
-            features["Internal Resistance at SOC 0 (Ohms)"] = round(internal_resistance, 4)
-
-        except Exception:
-            features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-
-    def extract_internal_resistance_soc_100(self, df, features, cycle):
-        """
-        Extracts internal resistance at SOC = 100% from the dataset.
-        Dynamically finds rest step that occurs after charge for all cycles
-        """
-        try:
-            cycle_data = df[df["Cycle"] == int(cycle)].copy()
-
+            cycle = int(cycle)
+            cycle_data = df[df["Cycle"] == cycle].copy()
             if cycle_data.empty:
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                features[label] = np.nan;
                 return
-
-            # Sort by index to maintain chronological order
             cycle_data = cycle_data.sort_index()
 
-            # Find rest steps that are preceded by charge steps
-            rest_steps = []
-            prev_status = None
-
-            for _, row in cycle_data.iterrows():
-                current_status = row["Status"]
-                current_step = row["Step"]
-
-                # If current is rest and previous was charge, this is SOC 100%
-                if (current_status == "Rest" and
-                        prev_status is not None and
-                        "Chg" in prev_status):
-                    rest_steps.append(current_step)
-
-                prev_status = current_status
-
-            if not rest_steps:
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
-                return
-
-            # Use the last rest step after charge (in case there are multiple)
-            target_step = rest_steps[-1]
-            idx = ((df["Status"] == "Rest") &
-                   (df["Cycle"] == int(cycle)) &
-                   (df["Step"] == target_step))
+            if cycle == 1:
+                idx = (df["Cycle"] == 1) & (df["Step"] == 1) & (df["Status"] == "Rest")
+            else:
+                discharge_alias = {"DChg", "CC_DChg", "Discharge"}
+                rest_steps, prev_status = [], None
+                for _, row in cycle_data.iterrows():
+                    if row["Status"] == "Rest" and prev_status in discharge_alias:
+                        rest_steps.append(row["Step"])
+                    prev_status = row["Status"]
+                if not rest_steps:
+                    features[label] = np.nan;
+                    return
+                target_step = rest_steps[-1]
+                idx = (df["Cycle"] == cycle) & (df["Step"] == target_step) & (df["Status"] == "Rest")
 
             if not idx.any():
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                features[label] = np.nan;
+                return
+            index = df[idx].index[-1]
+            pos = df.index.get_loc(index)
+            if pos + 1 >= len(df):
+                features[label] = np.nan;
                 return
 
-            # Find the last index of the rest period
-            rest_indices = df[idx].index
-            if len(rest_indices) == 0:
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
-                return
-
-            index = rest_indices[-1]
-
-            # Check if we have a next data point for calculation
-            if index + 1 >= len(df):
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
-                return
-
-            ocv = round(df["Voltage"][index], 4)
-            ocv_dV = round(df["Voltage"][index + 1], 4)
-            delta_current = abs(df["Current(mA)"][index + 1] - df["Current(mA)"][index])
-
+            ocv = float(df["Voltage"].iloc[pos])
+            ocv_dV = float(df["Voltage"].iloc[pos + 1])
+            delta_current = abs(float(df["Current(mA)"].iloc[pos + 1]) - float(df["Current(mA)"].iloc[pos]))
             if delta_current == 0:
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                features[label] = np.nan;
                 return
 
-            delta_V = abs(ocv_dV - ocv)
-            internal_resistance = delta_V / (delta_current / 1000)
-            features["Internal Resistance at SOC 100 (Ohms)"] = round(internal_resistance, 4)
-
+            features[label] = round(abs(ocv_dV - ocv) / (delta_current / 1000), 4)
         except Exception:
-            features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+            features[label] = np.nan
+
+    def extract_internal_resistance_soc_100(self, df, features, cycle):
+        label = "Internal Resistance at SOC 100 (Ohms)"
+        try:
+            cycle = int(cycle)
+            cycle_data = df[df["Cycle"] == cycle].copy()
+            if cycle_data.empty:
+                features[label] = np.nan;
+                return
+            cycle_data = cycle_data.sort_index()
+
+            charge_alias = {"Chg", "CC_Chg", "Charge"}
+            rest_steps, prev_status = [], None
+            for _, row in cycle_data.iterrows():
+                if row["Status"] == "Rest" and prev_status in charge_alias:
+                    rest_steps.append(row["Step"])
+                prev_status = row["Status"]
+            if not rest_steps:
+                features[label] = np.nan;
+                return
+
+            target_step = rest_steps[-1]
+            idx = (df["Cycle"] == cycle) & (df["Step"] == target_step) & (df["Status"] == "Rest")
+            if not idx.any():
+                features[label] = np.nan;
+                return
+
+            index = df[idx].index[-1]
+            pos = df.index.get_loc(index)
+            if pos + 1 >= len(df):
+                features[label] = np.nan;
+                return
+
+            ocv = float(df["Voltage"].iloc[pos])
+            ocv_dV = float(df["Voltage"].iloc[pos + 1])
+            delta_current = abs(float(df["Current(mA)"].iloc[pos + 1]) - float(df["Current(mA)"].iloc[pos]))
+            if delta_current == 0:
+                features[label] = np.nan;
+                return
+
+            features[label] = round(abs(ocv_dV - ocv) / (delta_current / 1000), 4)
+        except Exception:
+            features[label] = np.nan
 
     def extract_charge_capacity(self, df, features, cycle, mass=1.0):
         """
@@ -544,8 +480,8 @@ class DQDVAnalysis:
                          cycle,
                          mass=1.0,
                          transition_voltage=None,
-                         charge_voltage_range=(2.8, 3.5),
-                         discharge_voltage_range=(2.8, 3.5)):
+                         charge_voltage_range=(2.5, 3.5),
+                         discharge_voltage_range=(2.5, 3.5)):
         """
         Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
 
@@ -680,8 +616,8 @@ class DQDVAnalysis:
                                db,
                                file_list,
                                selected_cycles=None,
-                               charge_voltage_range=(2.8, 3.5),
-                               discharge_voltage_range=(2.8, 3.5)):
+                               charge_voltage_range=(2.5, 3.5),
+                               discharge_voltage_range=(2.5, 3.5)):
         """
         Extract plateau capacity statistics from DataLoader cache for multiple files and cycles.
 
@@ -754,7 +690,7 @@ class DQDVAnalysis:
 
     def find_transition_voltage(self, df,
                                 cycle,
-                                voltage_range=(2.8, 3.5)):
+                                voltage_range=(2.5, 3.5)):
         """
         Find transition voltage where dQ/dV is flattest (closest to zero).
 
@@ -803,8 +739,8 @@ class DQDVAnalysis:
     def find_inflection_point(self,
                               df,
                               cycle,
-                              charge_voltage_range=(2.8, 3.5),
-                              discharge_voltage_range=(2.8, 3.5)):
+                              charge_voltage_range=(2.5, 3.5),
+                              discharge_voltage_range=(2.5, 3.5)):
         """
         Find inflection point using dV/dQ gradient analysis with peak detection.
         Uses capacity constraints (35-65% of total capacity) followed by voltage range filtering.
