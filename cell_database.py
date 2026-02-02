@@ -65,82 +65,160 @@ class CellDatabase:
         # Use openpyxl engine with read_only mode for better performance
         try:
             xls = pd.ExcelFile(excel_path, engine='openpyxl')
-        except:
-            # Fallback to default engine if openpyxl not available
-            xls = pd.ExcelFile(excel_path)
+        except Exception as e:
+            print(f"Error opening Excel file: {e}")
+            try:
+                # Fallback to default engine if openpyxl fails
+                xls = pd.ExcelFile(excel_path)
+            except Exception as e2:
+                print(f"Error: Could not open Excel file with any engine: {e2}")
+                raise RuntimeError(f"Failed to open database file '{excel_path}'. Check if the file is corrupted or in use.")
+
+        total_entries = 0
+        skipped_sheets = []
+        error_summary = []
 
         # Process each sheet that has the required columns
         for sheet_name in xls.sheet_names:
-            # First check headers to avoid loading unnecessary data
-            df_header = pd.read_excel(xls, sheet_name=sheet_name, nrows=0)
-            clean_headers = {col.strip(): col for col in df_header.columns}
+            try:
+                # First check headers to avoid loading unnecessary data
+                try:
+                    df_header = pd.read_excel(xls, sheet_name=sheet_name, nrows=0)
+                except Exception as e:
+                    skipped_sheets.append(f"{sheet_name} (header read error: {str(e)[:50]})")
+                    continue
 
-            # Skip sheets without required columns
-            if 'Name/ID' not in clean_headers and 'Active mass (mg)' not in clean_headers:
+                clean_headers = {col.strip(): col for col in df_header.columns if isinstance(col, str)}
+
+                # Skip sheets without required columns
+                if 'Name/ID' not in clean_headers and 'Active mass (mg)' not in clean_headers:
+                    # Check case-insensitive
+                    has_name = any(col.lower() == 'name/id' for col in clean_headers.keys())
+                    has_mass = any(col.lower() == 'active mass (mg)' for col in clean_headers.keys())
+                    if not (has_name and has_mass):
+                        continue
+
+                # Get actual column names from file (handling case sensitivity and whitespace)
+                name_col = clean_headers.get('Name/ID') or next((col for col in clean_headers.keys()
+                                                                 if col.lower() == 'name/id'), None)
+                mass_col = clean_headers.get('Active mass (mg)') or next((col for col in clean_headers.keys()
+                                                                          if col.lower() == 'active mass (mg)'), None)
+
+                if not name_col or not mass_col:
+                    continue
+
+                # Build list of columns to read (include loading level if present)
+                cols_to_read = [name_col, mass_col]
+                loading_col = next((col for col in df_header.columns if isinstance(col, str) and col.lower().strip() == 'loading level(mg/cm^2)'), None)
+                if loading_col:
+                    cols_to_read.append(loading_col)
+
+                # Read the sheet - vectorized operation
+                try:
+                    df = pd.read_excel(
+                        xls,
+                        sheet_name=sheet_name,
+                        usecols=cols_to_read,
+                        dtype={name_col: str}
+                    )
+                except Exception as e:
+                    skipped_sheets.append(f"{sheet_name} (data read error: {str(e)[:50]})")
+                    continue
+
+                # Standardize column names
+                df.columns = [col.strip() if isinstance(col, str) else str(col) for col in df.columns]
+                df = df.rename(columns={name_col: 'Name/ID', mass_col: 'Active mass (mg)'})
+                if loading_col:
+                    df = df.rename(columns={loading_col: 'Loading level(mg/cm^2)'})
+
+                initial_row_count = len(df)
+
+                # Remove rows with missing cell IDs
+                df = df[df['Name/ID'].notna() & (df['Name/ID'].astype(str).str.strip() != '')]
+
+                # Clean cell IDs: remove non-printable characters and extra whitespace
+                df['Name/ID'] = df['Name/ID'].astype(str).str.replace(r'[\x00-\x1f\x7f-\x9f]', '', regex=True).str.strip()
+                df = df[df['Name/ID'] != '']
+
+                # Vectorized conversion of mass from mg to g with robust string cleaning
+                mass_series = df['Active mass (mg)'].astype(str)
+                # Remove common problematic characters
+                mass_series = mass_series.str.replace(',', '.', regex=False)  # European decimal separator
+                mass_series = mass_series.str.replace(' ', '', regex=False)   # Remove spaces
+                mass_series = mass_series.str.replace('\u00a0', '', regex=False)  # Non-breaking space
+                mass_series = mass_series.str.replace(r'[^\d.]', '', regex=True)  # Keep only digits and periods
+
+                df['Active mass (mg)'] = pd.to_numeric(mass_series, errors='coerce') / 1000
+                df['Active mass (mg)'] = df['Active mass (mg)'].round(5)
+
+                # Remove rows with invalid mass values (NaN, zero, or negative)
+                df = df[df['Active mass (mg)'].notna() & (df['Active mass (mg)'] > 0)]
+
+                rows_processed = len(df)
+                rows_skipped = initial_row_count - rows_processed
+
+                if rows_skipped > 0:
+                    error_summary.append(f"  {sheet_name}: {rows_skipped} rows skipped (invalid data)")
+
+                # Convert mass data to dictionary in one operation (vectorized)
+                try:
+                    mass_dict = df.set_index('Name/ID')['Active mass (mg)'].to_dict()
+                    self.mass_data.update(mass_dict)
+                    total_entries += len(mass_dict)
+                except Exception as e:
+                    error_summary.append(f"  {sheet_name}: Failed to convert to dict ({str(e)[:50]})")
+                    continue
+
+                # Handle loading level if column exists
+                if loading_col and 'Loading level(mg/cm^2)' in df.columns:
+                    try:
+                        # Clean and convert loading level data
+                        loading_series = df['Loading level(mg/cm^2)'].astype(str)
+                        loading_series = loading_series.str.replace(',', '.', regex=False)
+                        loading_series = loading_series.str.replace(' ', '', regex=False)
+                        loading_series = loading_series.str.replace('\u00a0', '', regex=False)
+                        loading_series = loading_series.str.replace(r'[^\d.]', '', regex=True)
+                        df['Loading level(mg/cm^2)'] = pd.to_numeric(loading_series, errors='coerce')
+
+                        # Store tuple of (mass, loading_level) for each cell
+                        loading_dict = df.set_index('Name/ID')['Loading level(mg/cm^2)'].to_dict()
+                        # Update mass_data with tuples containing both mass and loading
+                        for cell_id, mass in mass_dict.items():
+                            loading = loading_dict.get(cell_id)
+                            self.mass_data[cell_id] = (mass, loading)
+                    except Exception as e:
+                        # If loading level fails, keep the mass data
+                        error_summary.append(f"  {sheet_name}: Loading level processing failed ({str(e)[:50]})")
+
+            except Exception as e:
+                # Catch-all for any unexpected errors in sheet processing
+                skipped_sheets.append(f"{sheet_name} (unexpected error: {str(e)[:50]})")
                 continue
-
-            # Get actual column names from file (handling case sensitivity and whitespace)
-            name_col = clean_headers.get('Name/ID') or next((col for col in clean_headers.keys()
-                                                             if col.lower() == 'name/id'), None)
-            mass_col = clean_headers.get('Active mass (mg)') or next((col for col in clean_headers.keys()
-                                                                      if col.lower() == 'active mass (mg)'), None)
-
-            if not name_col or not mass_col:
-                continue
-
-            # Build list of columns to read (include loading level if present)
-            cols_to_read = [name_col, mass_col]
-            loading_col = next((col for col in df_header.columns if col.lower() == 'loading level(mg/cm^2)'), None)
-            if loading_col:
-                cols_to_read.append(loading_col)
-
-            # Read the sheet - vectorized operation
-            df = pd.read_excel(
-                xls,
-                sheet_name=sheet_name,
-                usecols=cols_to_read,
-                dtype={name_col: str}
-            )
-
-            # Standardize column names
-            df.columns = [col.strip() for col in df.columns]
-            df = df.rename(columns={name_col: 'Name/ID', mass_col: 'Active mass (mg)'})
-            if loading_col:
-                df = df.rename(columns={loading_col: 'Loading level(mg/cm^2)'})
-
-            # Remove rows with missing cell IDs
-            df = df[df['Name/ID'].notna() & (df['Name/ID'].astype(str).str.strip() != '')]
-            df['Name/ID'] = df['Name/ID'].astype(str).str.strip()
-
-            # Vectorized conversion of mass from mg to g
-            df['Active mass (mg)'] = pd.to_numeric(
-                df['Active mass (mg)'].astype(str).str.replace(',', '.'),
-                errors='coerce'
-            ) / 1000
-            df['Active mass (mg)'] = df['Active mass (mg)'].round(5)
-
-            # Remove rows with invalid mass values
-            df = df[df['Active mass (mg)'].notna()]
-
-            # Convert mass data to dictionary in one operation (vectorized)
-            mass_dict = df.set_index('Name/ID')['Active mass (mg)'].to_dict()
-            self.mass_data.update(mass_dict)
-
-            # Handle loading level if column exists
-            if loading_col and 'Loading level(mg/cm^2)' in df.columns:
-                # Store tuple of (mass, loading_level) for each cell
-                loading_dict = df.set_index('Name/ID')['Loading level(mg/cm^2)'].to_dict()
-                # Update mass_data with tuples containing both mass and loading
-                for cell_id, mass in mass_dict.items():
-                    loading = loading_dict.get(cell_id)
-                    self.mass_data[cell_id] = (mass, loading)
 
         # Build lowercase key mapping for O(1) case-insensitive lookups
         self._lowercase_keys = {k.lower(): k for k in self.mass_data.keys()}
 
         self._is_loaded = True
         elapsed = time.time() - start_time
-        print(f"Database loaded with {len(self.mass_data)} entries in {elapsed:.2f} seconds")
+        print(f"Database loaded with {total_entries} entries in {elapsed:.2f} seconds")
+
+        # Report any issues encountered
+        if skipped_sheets:
+            print(f"Warning: {len(skipped_sheets)} sheets could not be processed:")
+            for sheet_info in skipped_sheets[:5]:  # Show first 5
+                print(f"  - {sheet_info}")
+            if len(skipped_sheets) > 5:
+                print(f"  ... and {len(skipped_sheets) - 5} more")
+
+        if error_summary:
+            print("Data quality issues found:")
+            for error_info in error_summary[:10]:  # Show first 10
+                print(error_info)
+            if len(error_summary) > 10:
+                print(f"  ... and {len(error_summary) - 10} more issues")
+
+        if total_entries == 0:
+            raise RuntimeError(f"No valid data loaded from '{excel_path}'. Check that the file contains sheets with 'Name/ID' and 'Active mass (mg)' columns.")
 
         # Save to cache for future use
         try:
