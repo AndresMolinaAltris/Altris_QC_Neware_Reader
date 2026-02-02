@@ -24,3 +24,7 @@ config.txt
 
 # Other files
 *.xml
+
+# Data files
+Labscale cell specifications.xlsx
+Test_file.ndax
