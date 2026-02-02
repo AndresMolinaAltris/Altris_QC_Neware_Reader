@@ -19,6 +19,136 @@ configure_logging(base_directory)
 logging.debug("MAIN. QC Neware Reader Started")
 
 
+def _extract_features_from_files(data_loader, ndax_file_list, db, cycles_to_process=None,
+                                  extract_dqdv_curves=False, extract_plateau_stats=False):
+    """
+    Core feature extraction logic shared by processing functions.
+
+    Args:
+        data_loader: Initialized DataLoader with files already loaded
+        ndax_file_list: List of file paths to process
+        db: CellDatabase instance
+        cycles_to_process: List of specific cycles, or None to process all available cycles
+        extract_dqdv_curves: If True, extract dQ/dV curves (for plotting)
+        extract_plateau_stats: If True, extract plateau statistics
+
+    Returns:
+        Tuple of (all_features, dqdv_data, plateau_stats)
+    """
+    all_features = []
+    dqdv_data = {} if extract_dqdv_curves else None
+    plateau_stats = [] if extract_plateau_stats else None
+
+    for file in ndax_file_list:
+        # Skip files that failed to load
+        if not data_loader.is_loaded(file):
+            logging.warning(f"MAIN. Skipping file {os.path.basename(file)} - not loaded")
+            continue
+
+        filename_stem = Path(file).stem
+        cell_ID = extract_cell_id(filename_stem)
+        sample_name = extract_sample_name(filename_stem)
+        logging.debug(f"MAIN. Processing cell ID: {cell_ID}, sample: {sample_name}")
+
+        # Get data from DataLoader
+        df = data_loader.get_data(file)
+        if df is None:
+            logging.warning(f"MAIN. No data available for {filename_stem}")
+            continue
+
+        # Extract active mass
+        mass = db.get_mass(cell_ID)
+        if mass is None or mass <= 0:
+            logging.warning(f"MAIN. No mass found for cell {cell_ID}, using 1.0g")
+            mass = 1.0
+        else:
+            logging.debug(f"MAIN. Mass for cell {cell_ID} is {mass}g")
+
+        # Determine which cycles to process
+        if cycles_to_process is None:
+            cycles = sorted(df['Cycle'].unique())
+            logging.debug(f"MAIN. Processing all {len(cycles)} cycles for {filename_stem}")
+        else:
+            cycles = cycles_to_process
+
+        # Create feature and dqdv objects once per file
+        features_obj = Features(file)
+        dqdvanalysis_obj = DQDVAnalysis(file)
+
+        # Initialize dQ/dV data for this file if needed
+        if extract_dqdv_curves:
+            dqdv_data[filename_stem] = {}
+
+        # Process each cycle
+        for cycle in cycles:
+            # Check if cycle exists in the data
+            if cycle not in df['Cycle'].unique():
+                logging.debug(f"MAIN. Cycle {cycle} not found in file {filename_stem}, skipping")
+                continue
+
+            logging.debug(f"MAIN. Extracting features for {filename_stem}, cycle {cycle}")
+
+            try:
+                # Extract all features
+                feature_df = features_obj.extract(df, cycle, mass)
+
+                # Add metadata columns
+                feature_df["cell ID"] = cell_ID
+                feature_df["sample name"] = sample_name
+                feature_df["Cycle"] = cycle
+                feature_df["mass (g)"] = mass
+                feature_df["file"] = filename_stem
+
+                all_features.append(feature_df)
+
+                # Extract dQ/dV curves if requested (for plotting)
+                if extract_dqdv_curves:
+                    dqdv_result = dqdvanalysis_obj.extract_dqdv(df, cycle, mass)
+                    if dqdv_result:
+                        dqdv_data[filename_stem][cycle] = dqdv_result
+
+                # Extract plateau statistics if requested
+                if extract_plateau_stats:
+                    plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass)
+                    if plateau_data:
+                        plateau_data["File"] = cell_ID
+                        plateau_data["Cycle"] = cycle
+                        plateau_stats.append(plateau_data)
+
+            except Exception as e:
+                logging.warning(f"MAIN. Error processing {filename_stem}, cycle {cycle}: {e}")
+
+    return all_features, dqdv_data, plateau_stats
+
+
+def _load_files_to_dataloader(ndax_file_list):
+    """
+    Initialize DataLoader and load all files.
+
+    Args:
+        ndax_file_list: List of file paths to load
+
+    Returns:
+        Initialized DataLoader instance
+    """
+    data_loader = DataLoader()
+    logging.debug("MAIN. Loading all NDAX files...")
+    data_loader.load_files(ndax_file_list)
+
+    # Log cache info
+    cache_info = data_loader.get_cache_info()
+    logging.debug(f"MAIN. DataLoader cache: {cache_info['cached_files']} files, "
+                  f"{cache_info['total_rows']} total rows, "
+                  f"{cache_info['memory_usage_mb']:.1f} MB")
+
+    if cache_info['failed_files'] > 0:
+        failed_files = data_loader.get_failed_files()
+        logging.warning(f"MAIN. {cache_info['failed_files']} files failed to load: "
+                        f"{[os.path.basename(f) for f in failed_files]}")
+
+    return data_loader
+
+
 def process_files(ndax_file_list,
                   db,
                   selected_cycles=None,
@@ -38,7 +168,6 @@ def process_files(ndax_file_list,
     """
     logging.debug("MAIN. process_files started")
 
-
     # Use default cycles if none provided
     if selected_cycles is None or len(selected_cycles) == 0:
         selected_cycles = [1, 2, 3]
@@ -50,90 +179,16 @@ def process_files(ndax_file_list,
 
     logging.debug(f"MAIN. Using cycles: {selected_cycles}")
 
-    # Initialize DataLoader and load all files upfront
-    data_loader = DataLoader()
-    logging.debug("MAIN. Loading all NDAX files...")
-    data_loader.load_files(ndax_file_list)
+    # Load all files into DataLoader
+    data_loader = _load_files_to_dataloader(ndax_file_list)
 
-    # Log cache info
-    cache_info = data_loader.get_cache_info()
-    logging.debug(f"MAIN. DataLoader cache: {cache_info['cached_files']} files, "
-                  f"{cache_info['total_rows']} total rows, "
-                  f"{cache_info['memory_usage_mb']:.1f} MB")
-
-    if cache_info['failed_files'] > 0:
-        failed_files = data_loader.get_failed_files()
-        logging.warning(f"MAIN. {cache_info['failed_files']} files failed to load: "
-                        f"{[os.path.basename(f) for f in failed_files]}")
-
-    # Initialize containers for results
-    all_features = []
-    dqdv_data = {}
-
-    # Process each file using cached data
-    for file in ndax_file_list:
-        # Skip files that failed to load
-        if not data_loader.is_loaded(file):
-            logging.warning(f"MAIN. Skipping file {os.path.basename(file)} - not loaded")
-            continue
-
-        filename_stem = Path(file).stem
-        cell_ID = extract_cell_id(filename_stem)
-        logging.debug(f"MAIN.Processing cell ID: {cell_ID}")
-
-        sample_name = extract_sample_name(filename_stem)
-        logging.debug(f"Main.Processing sample: {sample_name}")
-
-        # Get data from DataLoader instead of reading file
-        df = data_loader.get_data(file)
-        if df is None:
-            logging.warning(f"MAIN. No data available for {filename_stem}")
-            continue
-
-        # Extract active mass
-        mass = db.get_mass(cell_ID)
-        if mass is None or mass <= 0:
-            logging.warning(f'MAIN.No mass found for cell {cell_ID}, using 1.0g')
-            mass = 1.0
-        else:
-            logging.debug(f'MAIN.Mass for cell {cell_ID} is {mass}g')
-
-        # Create a Features object once per file
-        features_obj = Features(file)
-
-        # Create a DQDVAnalysis object once per file
-        dqdvanalysis_obj = DQDVAnalysis(file)
-
-        # Initialize dQ/dV data dictionary for this file
-        dqdv_data[filename_stem] = {}
-
-        # Process each of the selected cycles
-        for cycle in selected_cycles:
-            logging.debug(f"MAIN.Extracting features for CYCLE {cycle}")
-
-            # Check if cycle exists in the data
-            if cycle not in df['Cycle'].unique():
-                logging.debug(f"MAIN.Cycle {cycle} not found in file {filename_stem}, skipping")
-                continue
-
-            # Extract all features in one call
-            feature_df = features_obj.extract(df, cycle, mass)
-
-            # Add file name and cycle number to the DataFrame
-            feature_df["cell ID"] = cell_ID
-            feature_df["sample name"] = sample_name
-            feature_df["Cycle"] = cycle
-            feature_df["mass (g)"] = mass
-            feature_df["file"] = filename_stem
-
-            # Append results to list
-            all_features.append(feature_df)
-
-            # Calculate dQ/dV data for this cycle
-            dqdv_result = dqdvanalysis_obj.extract_dqdv(df, cycle, mass)
-
-            if dqdv_result:
-                dqdv_data[filename_stem][cycle] = dqdv_result
+    # Extract features using shared helper
+    all_features, dqdv_data, _ = _extract_features_from_files(
+        data_loader, ndax_file_list, db,
+        cycles_to_process=selected_cycles,
+        extract_dqdv_curves=True,
+        extract_plateau_stats=False
+    )
 
     # Combine all results into a single DataFrame
     if all_features:
@@ -239,79 +294,16 @@ def process_all_cycles_for_complete_analysis(ndax_file_list,
     """
     logging.debug("MAIN. process_all_cycles_for_complete_analysis started")
 
-    # Initialize DataLoader and load all files upfront
-    data_loader = DataLoader()
-    logging.debug("MAIN. Loading all NDAX files for complete analysis...")
-    data_loader.load_files(ndax_file_list)
+    # Load all files into DataLoader
+    data_loader = _load_files_to_dataloader(ndax_file_list)
 
-    # Log cache info
-    cache_info = data_loader.get_cache_info()
-    logging.debug(f"MAIN. Complete analysis DataLoader cache: {cache_info['cached_files']} files, "
-                  f"{cache_info['total_rows']} total rows, "
-                  f"{cache_info['memory_usage_mb']:.1f} MB")
-
-    # Initialize containers for results
-    all_features = []
-    all_dqdv_stats = []
-
-    # Process each file using cached data
-    for file in ndax_file_list:
-        # Skip files that failed to load
-        if not data_loader.is_loaded(file):
-            logging.warning(f"MAIN. Skipping file {os.path.basename(file)} - not loaded")
-            continue
-
-        filename_stem = Path(file).stem
-        cell_ID = extract_cell_id(filename_stem)
-        sample_name = extract_sample_name(filename_stem)
-
-        # Get data from DataLoader
-        df = data_loader.get_data(file)
-        if df is None:
-            logging.warning(f"MAIN. No data available for {filename_stem}")
-            continue
-
-        # Extract active mass
-        mass = db.get_mass(cell_ID)
-        if mass is None or mass <= 0:
-            logging.warning(f'MAIN. No mass found for cell {cell_ID}, using 1.0g')
-            mass = 1.0
-
-        # Get all unique cycles from this file
-        all_cycles = sorted(df['Cycle'].unique())
-        logging.debug(f"MAIN. Processing {len(all_cycles)} cycles for {filename_stem}: {all_cycles}")
-
-        # Create feature and dqdv objects once per file
-        features_obj = Features(file)
-        dqdvanalysis_obj = DQDVAnalysis(file)
-
-        # Process each cycle
-        for cycle in all_cycles:
-            logging.debug(f"MAIN. Extracting complete analysis for {filename_stem}, cycle {cycle}")
-
-            try:
-                # Extract basic features
-                feature_df = features_obj.extract(df, cycle, mass)
-
-                # Add file information
-                feature_df["cell ID"] = cell_ID
-                feature_df["sample name"] = sample_name
-                feature_df["Cycle"] = cycle
-                feature_df["mass (g)"] = mass
-                feature_df["file"] = filename_stem
-
-                # Append to results
-                all_features.append(feature_df)
-
-                # Extract dQ/dV data and plateau statistics
-                plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass)
-                if plateau_data:
-                    plateau_data["File"] = cell_ID
-                    plateau_data["Cycle"] = cycle
-                    all_dqdv_stats.append(plateau_data)
-
-            except Exception as e:
-                logging.warning(f"MAIN. Error processing {filename_stem}, cycle {cycle}: {e}")
+    # Extract features using shared helper (cycles_to_process=None means all cycles)
+    all_features, _, plateau_stats = _extract_features_from_files(
+        data_loader, ndax_file_list, db,
+        cycles_to_process=None,  # Process all available cycles
+        extract_dqdv_curves=False,
+        extract_plateau_stats=True
+    )
 
     # Clean up DataLoader
     data_loader.clear_cache()
@@ -320,7 +312,7 @@ def process_all_cycles_for_complete_analysis(ndax_file_list,
     if all_features:
         final_features_df = pd.concat(all_features, ignore_index=True)
         logging.debug(f"MAIN. Complete analysis finished: {len(final_features_df)} total feature records")
-        return final_features_df, all_dqdv_stats
+        return final_features_df, plateau_stats
     else:
         logging.debug("MAIN. No features extracted for complete analysis")
         return pd.DataFrame(), []
