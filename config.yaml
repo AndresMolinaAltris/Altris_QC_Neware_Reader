@@ -1,0 +1,19 @@
+# Altris QC Neware Reader Configuration
+
+# Path to look for .ndax files
+data_path: "C:/Users/AndresMolina/OneDrive - Altris AB/Neware_Raw_Data"
+
+
+# Path to the cell database Excel file
+cell_database_path: "C:/Users/AndresMolina/Documents/01_Data/Labscale cell specifications.xlsx"
+#cell_database_path: "C:/Users/AndresMolina/OneDrive - Altris AB/Jonas H - Labscale cell specifications.xlsx"
+
+# Whether to use the GUI file selector (True) or scan directory (False)
+use_gui: true
+
+# Output file path for extracted features
+output_file: "extracted_features.xlsx"
+
+# Plotting configuration
+enable_plotting: true
+plots_directory: "./plots"
