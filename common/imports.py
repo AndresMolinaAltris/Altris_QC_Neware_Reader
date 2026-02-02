@@ -26,6 +26,6 @@ import matplotlib.gridspec as gridspec
 import yaml
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 import NewareNDA  # Make sure this package is actually installed

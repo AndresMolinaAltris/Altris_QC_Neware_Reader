@@ -1,6 +1,6 @@
 from common.imports import (
     tk, filedialog, ttk, messagebox, os, pd,
-    logging, FigureCanvasTkAgg, Figure, plt, re
+    logging, FigureCanvasTkAgg, NavigationToolbar2Tk, Figure, plt, re
 )
 from data_loader import DataLoader # For some reason I cannot import this from common imports
 from constants import STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE, COL_CURRENT
@@ -805,6 +805,13 @@ class FileSelector:
 
         self.fig = Figure(figsize=(8, 4))
         self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
+
+        # Add navigation toolbar for zoom/pan capability
+        toolbar_frame = ttk.Frame(plot_container)
+        toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        self.toolbar.update()
+
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
@@ -969,6 +976,13 @@ class FileSelector:
         # Create a Figure and add it to a canvas
         self.dqdv_fig = Figure(figsize=(8, 4))
         self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
+
+        # Add navigation toolbar for zoom/pan capability
+        toolbar_frame = ttk.Frame(plot_container)
+        toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+        self.dqdv_toolbar = NavigationToolbar2Tk(self.dqdv_canvas, toolbar_frame)
+        self.dqdv_toolbar.update()
+
         self.dqdv_canvas.draw()
         self.dqdv_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
@@ -1266,6 +1280,12 @@ class FileSelector:
             # Create a new canvas with the figure
             self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
 
+            # Add navigation toolbar for zoom/pan capability
+            toolbar_frame = ttk.Frame(plot_container)
+            toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+            self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+            self.toolbar.update()
+
             # Make sure the figure fits properly in the available space
             self.fig.tight_layout()
 
@@ -1463,6 +1483,12 @@ class FileSelector:
         logging.debug("Creating new FigureCanvasTkAgg for dQ/dV figure")
         try:
             self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
+
+            # Add navigation toolbar for zoom/pan capability
+            toolbar_frame = ttk.Frame(plot_container)
+            toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+            self.dqdv_toolbar = NavigationToolbar2Tk(self.dqdv_canvas, toolbar_frame)
+            self.dqdv_toolbar.update()
 
             # Make sure the figure fits properly in the available space
             self.dqdv_fig.tight_layout()
