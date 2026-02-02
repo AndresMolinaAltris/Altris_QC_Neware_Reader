@@ -1,6 +1,12 @@
 from common.imports import os, np, pd, logging, Path
 from scipy.signal import savgol_filter, find_peaks
 from data_import import extract_cell_id
+from constants import (
+    STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, STATUS_REST,
+    CHARGE_STATUSES, DISCHARGE_STATUSES,
+    COL_CYCLE, COL_STEP, COL_STATUS, COL_VOLTAGE, COL_CURRENT, COL_TIME,
+    COL_CHARGE_CAPACITY, COL_DISCHARGE_CAPACITY
+)
 
 class Features:
     """
@@ -58,19 +64,18 @@ class Features:
             cycle_data = cycle_data.sort_index()
 
             if cycle == 1:
-                idx = (df["Cycle"] == 1) & (df["Step"] == 1) & (df["Status"] == "Rest")
+                idx = (df[COL_CYCLE] == 1) & (df[COL_STEP] == 1) & (df[COL_STATUS] == STATUS_REST)
             else:
-                discharge_alias = {"DChg", "CC_DChg", "Discharge"}
                 rest_steps, prev_status = [], None
                 for _, row in cycle_data.iterrows():
-                    if row["Status"] == "Rest" and prev_status in discharge_alias:
-                        rest_steps.append(row["Step"])
-                    prev_status = row["Status"]
+                    if row[COL_STATUS] == STATUS_REST and prev_status in DISCHARGE_STATUSES:
+                        rest_steps.append(row[COL_STEP])
+                    prev_status = row[COL_STATUS]
                 if not rest_steps:
                     features[label] = np.nan;
                     return
                 target_step = rest_steps[-1]
-                idx = (df["Cycle"] == cycle) & (df["Step"] == target_step) & (df["Status"] == "Rest")
+                idx = (df[COL_CYCLE] == cycle) & (df[COL_STEP] == target_step) & (df[COL_STATUS] == STATUS_REST)
 
             if not idx.any():
                 features[label] = np.nan;
@@ -81,9 +86,9 @@ class Features:
                 features[label] = np.nan;
                 return
 
-            ocv = float(df["Voltage"].iloc[pos])
-            ocv_dV = float(df["Voltage"].iloc[pos + 1])
-            delta_current = abs(float(df["Current(mA)"].iloc[pos + 1]) - float(df["Current(mA)"].iloc[pos]))
+            ocv = float(df[COL_VOLTAGE].iloc[pos])
+            ocv_dV = float(df[COL_VOLTAGE].iloc[pos + 1])
+            delta_current = abs(float(df[COL_CURRENT].iloc[pos + 1]) - float(df[COL_CURRENT].iloc[pos]))
             if delta_current == 0:
                 features[label] = np.nan;
                 return
@@ -102,18 +107,17 @@ class Features:
                 return
             cycle_data = cycle_data.sort_index()
 
-            charge_alias = {"Chg", "CC_Chg", "Charge"}
             rest_steps, prev_status = [], None
             for _, row in cycle_data.iterrows():
-                if row["Status"] == "Rest" and prev_status in charge_alias:
-                    rest_steps.append(row["Step"])
-                prev_status = row["Status"]
+                if row[COL_STATUS] == STATUS_REST and prev_status in CHARGE_STATUSES:
+                    rest_steps.append(row[COL_STEP])
+                prev_status = row[COL_STATUS]
             if not rest_steps:
                 features[label] = np.nan;
                 return
 
             target_step = rest_steps[-1]
-            idx = (df["Cycle"] == cycle) & (df["Step"] == target_step) & (df["Status"] == "Rest")
+            idx = (df[COL_CYCLE] == cycle) & (df[COL_STEP] == target_step) & (df[COL_STATUS] == STATUS_REST)
             if not idx.any():
                 features[label] = np.nan;
                 return
@@ -124,9 +128,9 @@ class Features:
                 features[label] = np.nan;
                 return
 
-            ocv = float(df["Voltage"].iloc[pos])
-            ocv_dV = float(df["Voltage"].iloc[pos + 1])
-            delta_current = abs(float(df["Current(mA)"].iloc[pos + 1]) - float(df["Current(mA)"].iloc[pos]))
+            ocv = float(df[COL_VOLTAGE].iloc[pos])
+            ocv_dV = float(df[COL_VOLTAGE].iloc[pos + 1])
+            delta_current = abs(float(df[COL_CURRENT].iloc[pos + 1]) - float(df[COL_CURRENT].iloc[pos]))
             if delta_current == 0:
                 features[label] = np.nan;
                 return
@@ -145,8 +149,8 @@ class Features:
         :param mass: Float representing the mass of active material (default: 1.0 g).
         """
         try:
-            idx = np.logical_and(df["Status"] == "CC_Chg", df["Cycle"] == int(cycle))
-            initial_charge_capacity = df[idx]["Charge_Capacity(mAh)"].max()
+            idx = np.logical_and(df[COL_STATUS] == STATUS_CC_CHARGE, df[COL_CYCLE] == int(cycle))
+            initial_charge_capacity = df[idx][COL_CHARGE_CAPACITY].max()
             initial_specific_charge_capacity = initial_charge_capacity / mass
             features["Charge Capacity (mAh)"] = round(initial_charge_capacity, 3)
             features["Specific Charge Capacity (mAh/g)"] = round(initial_specific_charge_capacity, 1)
@@ -164,8 +168,8 @@ class Features:
         :param mass: Float representing the mass of active material (default: 1.0 g).
         """
         try:
-            idx = np.logical_and(df["Status"] == "CC_DChg", df["Cycle"] == int(cycle))
-            initial_discharge_capacity = df[idx]["Discharge_Capacity(mAh)"].max()
+            idx = np.logical_and(df[COL_STATUS] == STATUS_CC_DISCHARGE, df[COL_CYCLE] == int(cycle))
+            initial_discharge_capacity = df[idx][COL_DISCHARGE_CAPACITY].max()
             initial_specific_discharge_capacity = initial_discharge_capacity / mass
             features["Discharge Capacity (mAh)"] = round(initial_discharge_capacity, 3)
             features["Specific Discharge Capacity (mAh/g)"] = round(initial_specific_discharge_capacity, 1)
@@ -234,25 +238,25 @@ class DQDVAnalysis:
 
         # Sort by voltage to ensure proper calculation
         if direction == 'charge':
-            data = data.sort_values('Voltage', ascending=True)
-            capacity_col = 'Charge_Capacity(mAh)'
+            data = data.sort_values(COL_VOLTAGE, ascending=True)
+            capacity_col = COL_CHARGE_CAPACITY
         else:
-            data = data.sort_values('Voltage', ascending=False)
-            capacity_col = 'Discharge_Capacity(mAh)'
+            data = data.sort_values(COL_VOLTAGE, ascending=False)
+            capacity_col = COL_DISCHARGE_CAPACITY
 
         # Drop duplicates to reduce noise
-        data = data.drop_duplicates(subset=['Voltage'])
+        data = data.drop_duplicates(subset=[COL_VOLTAGE])
         data = data.reset_index(drop=True)
 
         # Get voltage and capacity data
-        voltage = data['Voltage'].values
+        voltage = data[COL_VOLTAGE].values
         capacity = data[capacity_col].values
 
         # Check if this is high C-rate discharge data
         skip_smoothing = False
-        if direction == 'discharge' and 'Time' in data.columns and len(data) > 10:
+        if direction == 'discharge' and COL_TIME in data.columns and len(data) > 10:
             # Calculate average time step between measurements
-            time_steps = data['Time'].diff().dropna()
+            time_steps = data[COL_TIME].diff().dropna()
             avg_time_step = time_steps.mean()
 
             # Detect if this is high C-rate discharge (fast acquisition)
@@ -357,15 +361,15 @@ class DQDVAnalysis:
         """
         try:
             # Filter data for the specified cycle
-            cycle_df = df[df["Cycle"] == int(cycle)].copy()
+            cycle_df = df[df[COL_CYCLE] == int(cycle)].copy()
 
             # Define a minimum number of points required for proper calculation
             if len(cycle_df) < 10:
                 return None
 
             # Separate charge and discharge data
-            charge_data = cycle_df[cycle_df["Status"] == "CC_Chg"].copy()
-            discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
+            charge_data = cycle_df[cycle_df[COL_STATUS] == STATUS_CC_CHARGE].copy()
+            discharge_data = cycle_df[cycle_df[COL_STATUS] == STATUS_CC_DISCHARGE].copy()
 
             # Get dQ/dV data for charge and discharge
             charge_dqdv = self._calculate_dqdv(charge_data, 'charge', mass, pre_smooth=True)
@@ -541,24 +545,24 @@ class DQDVAnalysis:
                 logging.debug(f"Using provided transition voltage: {transition_voltage:.4f}V")
 
             # Filter data for the specified cycle
-            cycle_df = df[df["Cycle"] == int(cycle)].copy()
+            cycle_df = df[df[COL_CYCLE] == int(cycle)].copy()
 
             # Initialize result dictionary
             result = {}
 
             # Process charge data
-            charge_data = cycle_df[cycle_df["Status"] == "CC_Chg"].copy()
+            charge_data = cycle_df[cycle_df[COL_STATUS] == STATUS_CC_CHARGE].copy()
             if not charge_data.empty:
                 # Sort by voltage to ensure proper calculation
-                charge_data = charge_data.sort_values('Voltage', ascending=True)
+                charge_data = charge_data.sort_values(COL_VOLTAGE, ascending=True)
 
                 # Get initial and final capacity values
-                initial_capacity = charge_data["Charge_Capacity(mAh)"].iloc[0]
-                final_capacity = charge_data["Charge_Capacity(mAh)"].iloc[-1]
+                initial_capacity = charge_data[COL_CHARGE_CAPACITY].iloc[0]
+                final_capacity = charge_data[COL_CHARGE_CAPACITY].iloc[-1]
 
                 # Find the nearest point to transition voltage
-                transition_idx = (charge_data['Voltage'] - charge_transition).abs().idxmin()
-                transition_capacity = charge_data.loc[transition_idx, "Charge_Capacity(mAh)"]
+                transition_idx = (charge_data[COL_VOLTAGE] - charge_transition).abs().idxmin()
+                transition_capacity = charge_data.loc[transition_idx, COL_CHARGE_CAPACITY]
 
                 # Calculate plateau capacities
                 first_plateau = (transition_capacity - initial_capacity) / mass
@@ -571,18 +575,18 @@ class DQDVAnalysis:
                 result["Charge Transition Voltage (V)"] = round(charge_transition, 4)
 
             # Process discharge data
-            discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
+            discharge_data = cycle_df[cycle_df[COL_STATUS] == STATUS_CC_DISCHARGE].copy()
             if not discharge_data.empty:
                 # Sort by voltage to ensure proper calculation
-                discharge_data = discharge_data.sort_values('Voltage', ascending=False)
+                discharge_data = discharge_data.sort_values(COL_VOLTAGE, ascending=False)
 
                 # Get initial and final capacity values
-                initial_capacity = discharge_data["Discharge_Capacity(mAh)"].iloc[0]
-                final_capacity = discharge_data["Discharge_Capacity(mAh)"].iloc[-1]
+                initial_capacity = discharge_data[COL_DISCHARGE_CAPACITY].iloc[0]
+                final_capacity = discharge_data[COL_DISCHARGE_CAPACITY].iloc[-1]
 
                 # Find the nearest point to transition voltage
-                transition_idx = (discharge_data['Voltage'] - discharge_transition).abs().idxmin()
-                transition_capacity = discharge_data.loc[transition_idx, "Discharge_Capacity(mAh)"]
+                transition_idx = (discharge_data[COL_VOLTAGE] - discharge_transition).abs().idxmin()
+                transition_capacity = discharge_data.loc[transition_idx, COL_DISCHARGE_CAPACITY]
 
                 # Calculate plateau capacities
                 first_plateau = (transition_capacity - initial_capacity) / mass
@@ -758,7 +762,7 @@ class DQDVAnalysis:
             f"DQDVAnalysis.find_inflection_point started with charge_range: {charge_voltage_range}, discharge_range: {discharge_voltage_range}")
 
         # Filter data for the specified cycle
-        cycle_df = df[df["Cycle"] == int(cycle)].copy()
+        cycle_df = df[df[COL_CYCLE] == int(cycle)].copy()
 
         if cycle_df.empty:
             logging.debug(f"No data found for cycle {cycle}")
@@ -768,25 +772,25 @@ class DQDVAnalysis:
 
         # Process charge and discharge separately with their respective voltage ranges
         processing_params = [
-            ('CC_Chg', 'Charge_Capacity(mAh)', charge_voltage_range, 'charge'),
-            ('CC_DChg', 'Discharge_Capacity(mAh)', discharge_voltage_range, 'discharge')
+            (STATUS_CC_CHARGE, COL_CHARGE_CAPACITY, charge_voltage_range, 'charge'),
+            (STATUS_CC_DISCHARGE, COL_DISCHARGE_CAPACITY, discharge_voltage_range, 'discharge')
         ]
 
         for status, capacity_col, voltage_range, key_prefix in processing_params:
-            seg_data = cycle_df[cycle_df['Status'] == status].copy()
+            seg_data = cycle_df[cycle_df[COL_STATUS] == status].copy()
 
             if len(seg_data) < 10:
                 logging.debug(f"Insufficient data for {status} in cycle {cycle}")
                 continue
 
             # Sort data appropriately
-            if status == 'CC_Chg':
-                seg_data = seg_data.sort_values('Voltage', ascending=True)
+            if status == STATUS_CC_CHARGE:
+                seg_data = seg_data.sort_values(COL_VOLTAGE, ascending=True)
             else:
-                seg_data = seg_data.sort_values('Voltage', ascending=False)
+                seg_data = seg_data.sort_values(COL_VOLTAGE, ascending=False)
 
             # Get voltage and capacity arrays
-            volt = seg_data['Voltage'].values
+            volt = seg_data[COL_VOLTAGE].values
             cap = seg_data[capacity_col].values
 
             # STEP 1: Apply capacity constraint (35-65% of total capacity change)
@@ -795,7 +799,7 @@ class DQDVAnalysis:
             capacity_65_percent = cap[0] + 0.65 * total_capacity_change
 
             # Create capacity mask
-            if status == 'CC_Chg':
+            if status == STATUS_CC_CHARGE:
                 # For charge, capacity increases
                 capacity_mask = (cap >= capacity_35_percent) & (cap <= capacity_65_percent)
             else:
@@ -848,7 +852,7 @@ class DQDVAnalysis:
 
             # Find peaks in derivative
             try:
-                if status == 'CC_Chg':
+                if status == STATUS_CC_CHARGE:
                     # For charge, find positive peaks in dV/dQ
                     peaks, _ = find_peaks(sub_dv[min_idx:max_idx])
                 else:

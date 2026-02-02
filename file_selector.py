@@ -3,6 +3,7 @@ from common.imports import (
     logging, FigureCanvasTkAgg, Figure, plt, re
 )
 from data_loader import DataLoader # For some reason I cannot import this from common imports
+from constants import STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE, COL_CURRENT
 
 class CycleSelectionDialog(tk.Toplevel):
     """Dialog for selecting which cycles to display in plots and analysis."""
@@ -373,12 +374,12 @@ class FileSelector:
         """
         try:
             # Get charge current (average during CC_Chg phase)
-            charge_data = df[(df['Cycle'] == cycle) & (df['Status'] == 'CC_Chg')]
-            charge_current = abs(charge_data['Current(mA)'].mean()) if not charge_data.empty else None
+            charge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_CHARGE)]
+            charge_current = abs(charge_data[COL_CURRENT].mean()) if not charge_data.empty else None
 
             # Get discharge current (average during CC_DChg phase)
-            discharge_data = df[(df['Cycle'] == cycle) & (df['Status'] == 'CC_DChg')]
-            discharge_current = abs(discharge_data['Current(mA)'].mean()) if not discharge_data.empty else None
+            discharge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_DISCHARGE)]
+            discharge_current = abs(discharge_data[COL_CURRENT].mean()) if not discharge_data.empty else None
 
             return charge_current, discharge_current
 
