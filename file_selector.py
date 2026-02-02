@@ -791,23 +791,23 @@ class FileSelector:
     def _create_plot_area(self, parent):
         """Create the plotting area within the GUI."""
         # Create a container frame with fixed height for the button
-        button_container = ttk.Frame(parent, height=40)
-        button_container.pack(side=tk.BOTTOM, fill=tk.X)
-        button_container.pack_propagate(False)  # Prevent shrinking
+        self.button_container = ttk.Frame(parent, height=40)
+        self.button_container.pack(side=tk.BOTTOM, fill=tk.X)
+        self.button_container.pack_propagate(False)  # Prevent shrinking
 
         # Add Save Plot button
-        save_plot_button = ttk.Button(button_container, text="Save Plot", command=self._save_current_plot)
+        save_plot_button = ttk.Button(self.button_container, text="Save Plot", command=self._save_current_plot)
         save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
 
         # Create a Figure and add it to a canvas
-        plot_container = ttk.Frame(parent)
-        plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+        self.plot_container = ttk.Frame(parent)
+        self.plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP, before=self.button_container)
 
         self.fig = Figure(figsize=(8, 4))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_container)
 
         # Add navigation toolbar for zoom/pan capability
-        toolbar_frame = ttk.Frame(plot_container)
+        toolbar_frame = ttk.Frame(self.plot_container)
         toolbar_frame.pack(side=tk.TOP, fill=tk.X)
         self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
         self.toolbar.update()
@@ -960,25 +960,25 @@ class FileSelector:
         plot_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
 
         # Create a container frame with fixed height for the save button
-        button_container = ttk.Frame(plot_frame, height=40)
-        button_container.pack(side=tk.BOTTOM, fill=tk.X)
-        button_container.pack_propagate(False)  # Prevent shrinking
+        self.dqdv_button_container = ttk.Frame(plot_frame, height=40)
+        self.dqdv_button_container.pack(side=tk.BOTTOM, fill=tk.X)
+        self.dqdv_button_container.pack_propagate(False)  # Prevent shrinking
 
         # Add Save Plot button
-        save_plot_button = ttk.Button(button_container, text="Save Plot",
+        save_plot_button = ttk.Button(self.dqdv_button_container, text="Save Plot",
                                       command=lambda: self._save_current_plot(plot_type="dqdv"))
         save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
 
         # Create the actual plot area
-        plot_container = ttk.Frame(plot_frame)
-        plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+        self.dqdv_plot_container = ttk.Frame(plot_frame)
+        self.dqdv_plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP, before=self.dqdv_button_container)
 
         # Create a Figure and add it to a canvas
         self.dqdv_fig = Figure(figsize=(8, 4))
-        self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
+        self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=self.dqdv_plot_container)
 
         # Add navigation toolbar for zoom/pan capability
-        toolbar_frame = ttk.Frame(plot_container)
+        toolbar_frame = ttk.Frame(self.dqdv_plot_container)
         toolbar_frame.pack(side=tk.TOP, fill=tk.X)
         self.dqdv_toolbar = NavigationToolbar2Tk(self.dqdv_canvas, toolbar_frame)
         self.dqdv_toolbar.update()
@@ -1252,36 +1252,36 @@ class FileSelector:
             print("Warning: Plot frame no longer exists")
             return
 
-        # Completely clear the plot frame first - safely
-        for widget in list(self.plot_frame.winfo_children()):
-            try:
-                widget.destroy()
-            except tk.TclError:
-                # Widget might already be destroyed, just continue
-                pass
+        # Clear only the plot container, not the button container
+        if hasattr(self, 'plot_container') and self.plot_container.winfo_exists():
+            for widget in list(self.plot_container.winfo_children()):
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
+        else:
+            # If plot_container doesn't exist yet, clear non-button children
+            for widget in list(self.plot_frame.winfo_children()):
+                if widget != self.button_container:
+                    try:
+                        widget.destroy()
+                    except tk.TclError:
+                        pass
 
         # Store the new figure with a consistent size
         self.fig = fig
 
         try:
-            # Create a fixed-height button container at the bottom
-            button_container = ttk.Frame(self.plot_frame, height=40)
-            button_container.pack(side=tk.BOTTOM, fill=tk.X)
-            button_container.pack_propagate(False)  # Prevent shrinking
-
-            # Add Save Plot button
-            save_plot_button = ttk.Button(button_container, text="Save Plot", command=self._save_current_plot)
-            save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
-
-            # Create plot container for the canvas
-            plot_container = ttk.Frame(self.plot_frame)
-            plot_container.pack(fill=tk.BOTH, expand=True)
+            # Create plot container for the canvas if it doesn't exist
+            if not hasattr(self, 'plot_container') or not self.plot_container.winfo_exists():
+                self.plot_container = ttk.Frame(self.plot_frame)
+                self.plot_container.pack(fill=tk.BOTH, expand=True, before=self.button_container)
 
             # Create a new canvas with the figure
-            self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
+            self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_container)
 
             # Add navigation toolbar for zoom/pan capability
-            toolbar_frame = ttk.Frame(plot_container)
+            toolbar_frame = ttk.Frame(self.plot_container)
             toolbar_frame.pack(side=tk.TOP, fill=tk.X)
             self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
             self.toolbar.update()
@@ -1451,41 +1451,41 @@ class FileSelector:
             for i, ax in enumerate(fig.axes):
                 logging.debug(f"Axis {i} has {len(ax.lines)} lines")
 
-        # Completely clear the plot frame
+        # Clear only the plot container, not the button container
         logging.debug("Clearing existing dQ/dV plot frame widgets")
-        for widget in list(plot_frame.winfo_children()):
-            try:
-                widget.destroy()
-            except tk.TclError:
-                # Widget might already be destroyed, just continue
-                logging.debug("Widget already destroyed during cleanup")
-                pass
+        if hasattr(self, 'dqdv_plot_container') and self.dqdv_plot_container.winfo_exists():
+            for widget in list(self.dqdv_plot_container.winfo_children()):
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    logging.debug("Widget already destroyed during cleanup")
+                    pass
+        else:
+            # If plot_container doesn't exist yet, clear non-button children
+            for widget in list(plot_frame.winfo_children()):
+                if widget != self.dqdv_button_container:
+                    try:
+                        widget.destroy()
+                    except tk.TclError:
+                        logging.debug("Widget already destroyed during cleanup")
+                        pass
 
         # Store the new figure
         logging.debug("Storing the new dQ/dV figure")
         self.dqdv_fig = fig
 
-        # Create a fixed-height button container at the bottom
-        button_container = ttk.Frame(plot_frame, height=40)
-        button_container.pack(side=tk.BOTTOM, fill=tk.X)
-        button_container.pack_propagate(False)  # Prevent shrinking
-
-        # Add Save Plot button
-        save_plot_button = ttk.Button(button_container, text="Save Plot",
-                                      command=lambda: self._save_current_plot(plot_type="dqdv"))
-        save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
-
-        # Create plot container for the canvas
-        plot_container = ttk.Frame(plot_frame)
-        plot_container.pack(fill=tk.BOTH, expand=True)
+        # Create plot container for the canvas if it doesn't exist
+        if not hasattr(self, 'dqdv_plot_container') or not self.dqdv_plot_container.winfo_exists():
+            self.dqdv_plot_container = ttk.Frame(plot_frame)
+            self.dqdv_plot_container.pack(fill=tk.BOTH, expand=True, before=self.dqdv_button_container)
 
         # Create a new canvas with the figure
         logging.debug("Creating new FigureCanvasTkAgg for dQ/dV figure")
         try:
-            self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
+            self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=self.dqdv_plot_container)
 
             # Add navigation toolbar for zoom/pan capability
-            toolbar_frame = ttk.Frame(plot_container)
+            toolbar_frame = ttk.Frame(self.dqdv_plot_container)
             toolbar_frame.pack(side=tk.TOP, fill=tk.X)
             self.dqdv_toolbar = NavigationToolbar2Tk(self.dqdv_canvas, toolbar_frame)
             self.dqdv_toolbar.update()
