@@ -5,7 +5,9 @@ class CellDatabase:
     _instance = None
 
     def __init__(self):
-        self.mass_data = {}
+        self.mass_data = {}         # Extract electrode mass
+        self.loading_data = {}      # Extract electrode loading level
+        self._lowercase_keys = {}   # Maps lowercase cell_id to actual key for fast case-insensitive lookup
         self._is_loaded = False
         self._cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 
@@ -46,6 +48,9 @@ class CellDatabase:
                 with open(cache_path, 'rb') as f:
                     self.mass_data = pickle.load(f)
 
+                # Rebuild lowercase key mapping from loaded data
+                self._lowercase_keys = {k.lower(): k for k in self.mass_data.keys()}
+
                 self._is_loaded = True
                 elapsed = time.time() - start_time
                 print(f"Database loaded from cache with {len(self.mass_data)} entries in {elapsed:.2f} seconds")
@@ -57,63 +62,81 @@ class CellDatabase:
         print("Loading cell database from Excel (this may take a while)...")
         start_time = time.time()
 
-        # Use pandas ExcelFile for better performance
-        with pd.ExcelFile(excel_path) as xls:
-            # Process each sheet that has the required columns
-            for sheet_name in xls.sheet_names:
-                # First check headers to avoid loading unnecessary data
-                df_header = pd.read_excel(xls, sheet_name=sheet_name, nrows=0)
-                clean_headers = {col.strip(): col for col in df_header.columns}
+        # Use openpyxl engine with read_only mode for better performance
+        try:
+            xls = pd.ExcelFile(excel_path, engine='openpyxl')
+        except:
+            # Fallback to default engine if openpyxl not available
+            xls = pd.ExcelFile(excel_path)
 
-                # Skip sheets without required columns
-                if 'Name/ID' not in clean_headers and 'Active mass (mg)' not in clean_headers:
-                    continue
+        # Process each sheet that has the required columns
+        for sheet_name in xls.sheet_names:
+            # First check headers to avoid loading unnecessary data
+            df_header = pd.read_excel(xls, sheet_name=sheet_name, nrows=0)
+            clean_headers = {col.strip(): col for col in df_header.columns}
 
-                # Get actual column names from file (handling case sensitivity and whitespace)
-                name_col = clean_headers.get('Name/ID') or next((col for col in clean_headers.keys()
-                                                                 if col.lower() == 'name/id'), None)
-                mass_col = clean_headers.get('Active mass (mg)') or next((col for col in clean_headers.keys()
-                                                                          if col.lower() == 'active mass (mg)'), None)
+            # Skip sheets without required columns
+            if 'Name/ID' not in clean_headers and 'Active mass (mg)' not in clean_headers:
+                continue
 
-                if not name_col or not mass_col:
-                    continue
+            # Get actual column names from file (handling case sensitivity and whitespace)
+            name_col = clean_headers.get('Name/ID') or next((col for col in clean_headers.keys()
+                                                             if col.lower() == 'name/id'), None)
+            mass_col = clean_headers.get('Active mass (mg)') or next((col for col in clean_headers.keys()
+                                                                      if col.lower() == 'active mass (mg)'), None)
 
-                # Read only needed columns for better performance
-                col_indices = [df_header.columns.get_loc(name_col), df_header.columns.get_loc(mass_col)]
+            if not name_col or not mass_col:
+                continue
 
-                # Read the sheet in one go since chunksize isn't supported in read_excel
-                df = pd.read_excel(
-                    xls,
-                    sheet_name=sheet_name,
-                    usecols=col_indices,
-                    dtype={name_col: str}
-                )
+            # Build list of columns to read (include loading level if present)
+            cols_to_read = [name_col, mass_col]
+            loading_col = next((col for col in df_header.columns if col.lower() == 'loading level(mg/cm^2)'), None)
+            if loading_col:
+                cols_to_read.append(loading_col)
 
-                # Rename columns for consistency
-                df.columns = [col.strip() for col in df.columns]
-                df = df.rename(columns={name_col: 'Name/ID', mass_col: 'Active mass (mg)'})
+            # Read the sheet - vectorized operation
+            df = pd.read_excel(
+                xls,
+                sheet_name=sheet_name,
+                usecols=cols_to_read,
+                dtype={name_col: str}
+            )
 
-                # Process rows in batches for better memory management
-                batch_size = 1000
-                total_rows = len(df)
+            # Standardize column names
+            df.columns = [col.strip() for col in df.columns]
+            df = df.rename(columns={name_col: 'Name/ID', mass_col: 'Active mass (mg)'})
+            if loading_col:
+                df = df.rename(columns={loading_col: 'Loading level(mg/cm^2)'})
 
-                for start_idx in range(0, total_rows, batch_size):
-                    end_idx = min(start_idx + batch_size, total_rows)
-                    batch = df.iloc[start_idx:end_idx]
+            # Remove rows with missing cell IDs
+            df = df[df['Name/ID'].notna() & (df['Name/ID'].astype(str).str.strip() != '')]
+            df['Name/ID'] = df['Name/ID'].astype(str).str.strip()
 
-                    for _, row in batch.iterrows():
-                        cell_id = str(row['Name/ID']).strip()
-                        if not cell_id:
-                            continue
+            # Vectorized conversion of mass from mg to g
+            df['Active mass (mg)'] = pd.to_numeric(
+                df['Active mass (mg)'].astype(str).str.replace(',', '.'),
+                errors='coerce'
+            ) / 1000
+            df['Active mass (mg)'] = df['Active mass (mg)'].round(5)
 
-                        try:
-                            mass_value = row['Active mass (mg)']
-                            if isinstance(mass_value, str):
-                                mass_value = mass_value.replace(',', '.')
-                            mass_value = round(float(mass_value) / 1000, 5)  # Convert mg to g
-                            self.mass_data[cell_id] = mass_value
-                        except (ValueError, AttributeError):
-                            continue
+            # Remove rows with invalid mass values
+            df = df[df['Active mass (mg)'].notna()]
+
+            # Convert mass data to dictionary in one operation (vectorized)
+            mass_dict = df.set_index('Name/ID')['Active mass (mg)'].to_dict()
+            self.mass_data.update(mass_dict)
+
+            # Handle loading level if column exists
+            if loading_col and 'Loading level(mg/cm^2)' in df.columns:
+                # Store tuple of (mass, loading_level) for each cell
+                loading_dict = df.set_index('Name/ID')['Loading level(mg/cm^2)'].to_dict()
+                # Update mass_data with tuples containing both mass and loading
+                for cell_id, mass in mass_dict.items():
+                    loading = loading_dict.get(cell_id)
+                    self.mass_data[cell_id] = (mass, loading)
+
+        # Build lowercase key mapping for O(1) case-insensitive lookups
+        self._lowercase_keys = {k.lower(): k for k in self.mass_data.keys()}
 
         self._is_loaded = True
         elapsed = time.time() - start_time
@@ -134,20 +157,48 @@ class CellDatabase:
 
         # Try to find with exact match first
         cell_id_str = str(cell_id).strip()
-        mass = self.mass_data.get(cell_id_str)
+        entry = self.mass_data.get(cell_id_str)
 
-        # If not found, try case-insensitive search
-        if mass is None:
-            cell_id_lower = cell_id_str.lower()
-            for key, value in self.mass_data.items():
-                if str(key).lower() == cell_id_lower:
-                    return value
+        # If not found, try case-insensitive search using pre-built mapping (O(1))
+        if entry is None:
+            actual_key = self._lowercase_keys.get(cell_id_str.lower())
+            if actual_key:
+                entry = self.mass_data[actual_key]
 
-        return mass
+        # Extract mass value (handle both tuple and scalar formats for backward compatibility)
+        if isinstance(entry, tuple):
+            return entry[0]  # (mass, loading)
+        return entry
+    
+    def get_loading_level(self, cell_id):
+        """
+        Separate function to retrieve only the loading level (mg/cm²).
+        Returns float if found, None if missing or database not loaded.
+        """
+        if not self._is_loaded:
+            return None
+
+        cell_id_str = str(cell_id).strip()
+        entry = self.mass_data.get(cell_id_str)
+
+        # Case-insensitive fallback using pre-built mapping (O(1))
+        if entry is None:
+            actual_key = self._lowercase_keys.get(cell_id_str.lower())
+            if actual_key:
+                entry = self.mass_data[actual_key]
+
+        if entry is None:
+            return None
+
+        # entry is a tuple: (mass_g, loading_mg_per_cm2) or just mass_g in old files
+        if isinstance(entry, tuple) and len(entry) == 2:
+            return entry[1] if entry[1] is not None else None
+        return None
 
     def clear_cache(self):
         """Clear the cached data"""
         self.mass_data = {}
+        self._lowercase_keys = {}
         self._is_loaded = False
 
     def rebuild_cache(self, excel_path):

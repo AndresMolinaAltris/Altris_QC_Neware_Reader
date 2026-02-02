@@ -1,10 +1,27 @@
 import sys
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any
 from common.imports import os, logging, Path, time, yaml, pd, plt, traceback
 from common.project_imports import (
     extract_cell_id, extract_sample_name, Features, DQDVAnalysis,
     CellDatabase, NewarePlotter, FileSelector,
     configure_logging, DataLoader
 )
+
+
+@dataclass
+class ProcessingResult:
+    """
+    Structured result from process_files(), decoupling processing from GUI.
+
+    This allows the caller to decide how to use the results (update GUI, save to file, etc.)
+    without the processing logic needing to know about GUI implementation details.
+    """
+    features_df: pd.DataFrame
+    capacity_fig: Optional[Any] = None  # matplotlib Figure
+    dqdv_fig: Optional[Any] = None      # matplotlib Figure
+    dqdv_data: Optional[Dict] = None    # Raw dQ/dV curves for plotting
+    plateau_stats: Optional[List] = None  # Plateau statistics
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -152,19 +169,18 @@ def _load_files_to_dataloader(ndax_file_list):
 def process_files(ndax_file_list,
                   db,
                   selected_cycles=None,
-                  enable_plotting=True,
-                  gui_callback=None):
+                  enable_plotting=True):
     """
-    Process a list of NDAX files and return the extracted features dataframe.
+    Process a list of NDAX files and return a structured ProcessingResult.
 
     Args:
         ndax_file_list: List of NDAX files to process
         db: CellDatabase instance
         selected_cycles: List of 3 cycle numbers to process and display (default: [1, 2, 3])
         enable_plotting: Whether to generate plots
-        gui_callback: Callback function for updating GUI
+
     Returns:
-        DataFrame containing extracted features
+        ProcessingResult containing features_df, figures, and statistics
     """
     logging.debug("MAIN. process_files started")
 
@@ -191,93 +207,73 @@ def process_files(ndax_file_list,
     )
 
     # Combine all results into a single DataFrame
-    if all_features:
-        final_features_df = pd.concat(all_features, ignore_index=True)
-
-        # Generate plots if enabled
-        if enable_plotting and ndax_file_list:
-            try:
-                logging.debug("MAIN.Generating capacity plots...")
-                plotter = NewarePlotter(db)
-
-                # Pass DataLoader to plotter instead of local cache
-                fig = plotter.plot_ndax_files_with_loader(
-                    data_loader,
-                    ndax_file_list,
-                    display_plot=False,
-                    gui_callback=gui_callback,
-                    selected_cycles=selected_cycles
-                )
-
-                # Generate dQ/dV plots
-                logging.debug("MAIN.Generating dQ/dV plots...")
-
-                dqdv_fig = plotter.plot_dqdv_curves_with_loader(
-                    data_loader,
-                    ndax_file_list,
-                    dqdv_data=dqdv_data,
-                    display_plot=False,
-                    gui_callback=None,
-                    selected_cycles=selected_cycles
-                )
-
-                # Update GUI with both plots and features data
-                if gui_callback:
-                    logging.debug(f"MAIN.GUI callback exists: {gui_callback}")
-
-                    # Call the main plot update (this already works)
-                    gui_callback(fig)
-
-                    # Update the analysis table with features data
-                    if hasattr(gui_callback.__self__, '_update_analysis_table'):
-                        logging.debug("MAIN.Updating analysis table with features data")
-                        gui_callback.__self__._update_analysis_table(final_features_df)
-
-                    # Update dQ/dV tab if we have the figure
-                    if dqdv_fig and hasattr(gui_callback.__self__, 'update_dqdv_plot'):
-                        logging.debug("MAIN.GUI callback has update_dqdv_plot method")
-                        # Extract plateau statistics using DQDVAnalysis batch method with separate voltage ranges
-                        dqdv_analyzer = DQDVAnalysis("plateau_extractor")
-                        plateau_stats = dqdv_analyzer.extract_plateaus_batch(
-                            data_loader,
-                            db,
-                            ndax_file_list,
-                            selected_cycles)
-
-                        logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
-                        # Call the update method
-                        try:
-                            logging.debug("MAIN.Calling update_dqdv_plot method")
-                            gui_callback.__self__.update_dqdv_plot(dqdv_fig, plateau_stats)
-                            logging.debug("MAIN.update_dqdv_plot method call completed")
-
-                            # Store dqdv_stats for complete analysis tab
-                            if hasattr(gui_callback.__self__, '_store_dqdv_stats'):
-                                logging.debug("MAIN.Storing dqdv_stats for complete analysis tab")
-                                gui_callback.__self__._store_dqdv_stats(plateau_stats)
-                            else:
-                                logging.debug("MAIN._store_dqdv_stats method not found on GUI callback")
-
-                        except Exception as e:
-                            logging.debug(f"MAIN.Error in update_dqdv_plot: {e}")
-                            logging.debug(traceback.format_exc())
-
-                logging.debug("MAIN.Plotting complete.")
-
-            except Exception as e:
-                logging.debug(f"MAIN.Error during plotting: {e}")
-
-        # Clean up DataLoader when done
-        data_loader.clear_cache()
-        logging.debug("MAIN.DataLoader cache cleared")
-
-        logging.debug("MAIN.Features extracted, process_files finished")
-        return final_features_df
-    else:
-        # Clean up DataLoader even if no features extracted
+    if not all_features:
         data_loader.clear_cache()
         logging.debug("MAIN.No features extracted, process_files func finished.")
-        return pd.DataFrame()
+        return ProcessingResult(features_df=pd.DataFrame())
+
+    final_features_df = pd.concat(all_features, ignore_index=True)
+
+    # Initialize result with features
+    capacity_fig = None
+    dqdv_fig = None
+    plateau_stats = None
+
+    # Generate plots if enabled
+    if enable_plotting and ndax_file_list:
+        try:
+            logging.debug("MAIN.Generating capacity plots...")
+            plotter = NewarePlotter(db)
+
+            # Generate capacity plot
+            capacity_fig = plotter.plot_ndax_files_with_loader(
+                data_loader,
+                ndax_file_list,
+                display_plot=False,
+                gui_callback=None,  # No longer pass GUI callback
+                selected_cycles=selected_cycles
+            )
+
+            # Generate dQ/dV plots
+            logging.debug("MAIN.Generating dQ/dV plots...")
+            dqdv_fig = plotter.plot_dqdv_curves_with_loader(
+                data_loader,
+                ndax_file_list,
+                dqdv_data=dqdv_data,
+                display_plot=False,
+                gui_callback=None,
+                selected_cycles=selected_cycles
+            )
+
+            # Extract plateau statistics
+            if dqdv_fig:
+                logging.debug("MAIN.Extracting plateau statistics...")
+                dqdv_analyzer = DQDVAnalysis("plateau_extractor")
+                plateau_stats = dqdv_analyzer.extract_plateaus_batch(
+                    data_loader,
+                    db,
+                    ndax_file_list,
+                    selected_cycles
+                )
+                logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
+
+            logging.debug("MAIN.Plotting complete.")
+
+        except Exception as e:
+            logging.debug(f"MAIN.Error during plotting: {e}")
+
+    # Clean up DataLoader when done
+    data_loader.clear_cache()
+    logging.debug("MAIN.DataLoader cache cleared")
+
+    logging.debug("MAIN.Features extracted, process_files finished")
+    return ProcessingResult(
+        features_df=final_features_df,
+        capacity_fig=capacity_fig,
+        dqdv_fig=dqdv_fig,
+        dqdv_data=dqdv_data,
+        plateau_stats=plateau_stats
+    )
 
 def process_all_cycles_for_complete_analysis(ndax_file_list,
                                              db):
@@ -385,22 +381,40 @@ def main():
         selected_cycles = file_selector_instance.selected_cycles
         logging.debug(f"MAIN.Using selected cycles: {selected_cycles}")
 
-        # Process files with plotting enabled
-        features_df = process_files(
+        # Process files - returns structured ProcessingResult
+        result = process_files(
             ndax_file_list,
             db,
-            selected_cycles=selected_cycles,  # Pass the selected cycles
-            enable_plotting=enable_plotting,
-            gui_callback=file_selector_instance.update_plot)
+            selected_cycles=selected_cycles,
+            enable_plotting=enable_plotting
+        )
 
-        if not features_df.empty:
-            all_processed_features.append(features_df)
-            logging.debug(f"MAIN.Features processed successfully")
+        if result.features_df.empty:
+            return None
 
-            # Return the current batch features DataFrame
-            return features_df
+        # Store features for later use
+        all_processed_features.append(result.features_df)
+        logging.debug("MAIN.Features processed successfully")
 
-        return None
+        # Update GUI with results - direct method calls instead of hasattr introspection
+        try:
+            # Update capacity plot
+            if result.capacity_fig:
+                file_selector_instance.update_plot(result.capacity_fig)
+
+            # Update analysis table
+            file_selector_instance._update_analysis_table(result.features_df)
+
+            # Update dQ/dV plot and stats
+            if result.dqdv_fig and result.plateau_stats:
+                file_selector_instance.update_dqdv_plot(result.dqdv_fig, result.plateau_stats)
+                file_selector_instance._store_dqdv_stats(result.plateau_stats)
+
+        except Exception as e:
+            logging.debug(f"MAIN.Error updating GUI: {e}")
+            logging.debug(traceback.format_exc())
+
+        return result.features_df
 
     # Main processing path based on configuration
     logging.debug("MAIN. Opening file selector")
