@@ -1,7 +1,7 @@
 from common.imports import pd, os, logging, Path, Dict, List, Optional
 import yaml
 import re
-from NewareNDA import NewareNDAx_experimental as read_ndax_experimental
+from NewareNDA.NewareNDAx import read_ndax
 from cell_database import CellDatabase
 
 
@@ -47,7 +47,7 @@ class DataLoader:
 
                 # Load the file
                 logging.debug(f"DATA_LOADER: Loading file: {os.path.basename(file_path)}")
-                df = read_ndax_experimental.read_ndax(file_path)
+                df = read_ndax(file_path, software_cycle_number=True)
 
                 # Fallback logic for active mass
                 if df.attrs.get('active_mass') is None:
