@@ -28,3 +28,6 @@ config.txt
 # Data files
 Labscale cell specifications.xlsx
 Test_file.ndax
+
+# Improvement documentation (work-in-progress)
+IMPROVEMENTS.md
