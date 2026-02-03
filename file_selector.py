@@ -3,7 +3,10 @@ from common.imports import (
     logging, FigureCanvasTkAgg, NavigationToolbar2Tk, Figure, plt, re
 )
 from data_loader import DataLoader # For some reason I cannot import this from common imports
-from constants import STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE, COL_CURRENT
+from constants import (
+    STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE, COL_CURRENT,
+    COL_TIME, COL_CHARGE_CAPACITY, COL_DISCHARGE_CAPACITY
+)
 
 class CycleSelectionDialog(tk.Toplevel):
     """Dialog for selecting which cycles to display in plots and analysis."""
@@ -387,6 +390,87 @@ class FileSelector:
             logging.debug(f"Error extracting current data for cycle {cycle}: {e}")
             return None, None
 
+    def _calculate_crate_from_time(self, df, cycle, nominal_capacity_mah, phase='charge'):
+        """
+        Calculate C-rate from capacity transferred and time elapsed.
+
+        Parameters:
+        - df: DataFrame with cycle data
+        - cycle: Cycle number
+        - nominal_capacity_mah: Nominal capacity in mAh
+        - phase: 'charge' or 'discharge'
+
+        Returns:
+        - C-rate estimate from time, or None if calculation not possible
+        """
+        try:
+            if phase == 'charge':
+                status = STATUS_CC_CHARGE
+                capacity_col = COL_CHARGE_CAPACITY
+            else:
+                status = STATUS_CC_DISCHARGE
+                capacity_col = COL_DISCHARGE_CAPACITY
+
+            # Filter to CC phase of the target cycle
+            phase_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == status)]
+
+            if phase_data.empty:
+                return None
+
+            # Get capacity transferred (difference between end and start)
+            capacity_start = phase_data[capacity_col].iloc[0]
+            capacity_end = phase_data[capacity_col].iloc[-1]
+            capacity_transferred = abs(capacity_end - capacity_start)
+
+            # Get time elapsed (in hours)
+            time_start = phase_data[COL_TIME].iloc[0]
+            time_end = phase_data[COL_TIME].iloc[-1]
+            time_elapsed_hours = (time_end - time_start) / 3600  # Convert seconds to hours
+
+            if time_elapsed_hours == 0 or capacity_transferred == 0:
+                return None
+
+            # C-rate = Capacity_transferred / (Time_elapsed × Nominal_Capacity)
+            crate_time = capacity_transferred / (time_elapsed_hours * nominal_capacity_mah)
+
+            return crate_time
+
+        except Exception as e:
+            logging.debug(f"Error calculating C-rate from time for cycle {cycle}: {e}")
+            return None
+
+    def _round_to_standard_crate(self, crate_raw, crate_time=None, tolerance=0.15):
+        """
+        Round calculated C-rate to nearest standard value.
+        Optionally cross-check with time-based estimate.
+
+        Parameters:
+        - crate_raw: C-rate calculated from current
+        - crate_time: C-rate calculated from time (optional)
+        - tolerance: Maximum relative difference between methods (default 15%)
+
+        Returns:
+        - Rounded C-rate from standard list, or None if invalid input
+        """
+        STANDARD_CRATES = [0.1, 0.2, 0.33, 0.5, 1, 2, 3, 5, 10]
+
+        if crate_raw is None:
+            return None
+
+        # Cross-check if time-based estimate is available
+        if crate_time is not None:
+            relative_diff = abs(crate_raw - crate_time) / crate_raw if crate_raw != 0 else float('inf')
+            if relative_diff > tolerance:
+                logging.warning(
+                    f"C-rate mismatch: current-based={crate_raw:.3f}, "
+                    f"time-based={crate_time:.3f} (diff={relative_diff*100:.1f}%)"
+                )
+
+        # Find nearest standard C-rate
+        nearest_crate = min(STANDARD_CRATES, key=lambda x: abs(x - crate_raw))
+
+        return nearest_crate
+
     def _generate_complete_analysis(self):
         """Generate complete analysis for all cycles in selected files."""
         if not self.selected_files:
@@ -470,17 +554,13 @@ class FileSelector:
                 key = (file_key, cycle_key)
                 dqdv_dict[key] = stat
 
-        # Build C-rate reference data from raw data
-        crate_references = {}
-        if hasattr(self, '_raw_data_loader'):
-            for file_path in self._raw_data_loader.get_cached_files():
-                df = self._raw_data_loader.get_data(file_path)
-                if df is not None:
-                    from data_import import extract_cell_id
-                    from pathlib import Path
-                    cell_id = extract_cell_id(Path(file_path).stem)
-                    ref_charge_current, ref_discharge_current = self._extract_current_data(df, 1)
-                    crate_references[cell_id] = (ref_charge_current, ref_discharge_current)
+        # Load cell database for active mass
+        from common.project_imports import CellDatabase
+        from data_import import extract_cell_id
+        from pathlib import Path
+
+        db = CellDatabase.get_instance()
+        SPECIFIC_CAPACITY = 150  # mAh/g - hardcoded for cathode material
 
         consolidated_data = []
 
@@ -493,31 +573,59 @@ class FileSelector:
             # Get corresponding dqdv data
             dqdv_data = dqdv_dict.get(lookup_key, {})
 
-            # Calculate C-rates
+            # Calculate C-rates using the new robust method
             charge_crate_str = "N/A"
             discharge_crate_str = "N/A"
 
-            if cell_id in crate_references and hasattr(self, '_raw_data_loader'):
-                ref_charge_current, ref_discharge_current = crate_references[cell_id]
-
+            if hasattr(self, '_raw_data_loader'):
                 # Find the raw data for this cell and cycle
                 for file_path in self._raw_data_loader.get_cached_files():
                     df = self._raw_data_loader.get_data(file_path)
-                    if df is not None:
-                        from data_import import extract_cell_id
-                        from pathlib import Path
-                        if extract_cell_id(Path(file_path).stem) == cell_id:
-                            cycle_charge_current, cycle_discharge_current = self._extract_current_data(df, cycle)
+                    if df is not None and extract_cell_id(Path(file_path).stem) == cell_id:
+                        # Get active mass from database
+                        try:
+                            active_mass_mg = db.get_mass(cell_id) if db._is_loaded else None
+                            if active_mass_mg is None:
+                                # If database not loaded or mass not found, try to load it
+                                try:
+                                    # Try to get mass, if not found log warning
+                                    active_mass_mg = db.get_mass(cell_id)
+                                except:
+                                    active_mass_mg = None
 
-                            # Calculate C-rates
-                            if ref_charge_current and cycle_charge_current:
-                                charge_crate = (cycle_charge_current / ref_charge_current) * 0.1
-                                charge_crate_str = f"{charge_crate:.2f}"
+                            if active_mass_mg:
+                                active_mass_g = active_mass_mg if active_mass_mg < 1 else active_mass_mg / 1000
+                                nominal_capacity_mah = active_mass_g * SPECIFIC_CAPACITY
 
-                            if ref_discharge_current and cycle_discharge_current:
-                                discharge_crate = (cycle_discharge_current / ref_discharge_current) * 0.1
-                                discharge_crate_str = f"{discharge_crate:.2f}"
-                            break
+                                # Get current-based C-rate calculation
+                                cycle_charge_current, cycle_discharge_current = self._extract_current_data(df, cycle)
+
+                                # Calculate charge C-rate
+                                if cycle_charge_current and nominal_capacity_mah:
+                                    charge_crate_raw = cycle_charge_current / nominal_capacity_mah
+                                    charge_crate_time = self._calculate_crate_from_time(
+                                        df, cycle, nominal_capacity_mah, phase='charge'
+                                    )
+                                    charge_crate = self._round_to_standard_crate(charge_crate_raw, charge_crate_time)
+                                    if charge_crate is not None:
+                                        charge_crate_str = f"{charge_crate:.2f}"
+
+                                # Calculate discharge C-rate
+                                if cycle_discharge_current and nominal_capacity_mah:
+                                    discharge_crate_raw = cycle_discharge_current / nominal_capacity_mah
+                                    discharge_crate_time = self._calculate_crate_from_time(
+                                        df, cycle, nominal_capacity_mah, phase='discharge'
+                                    )
+                                    discharge_crate = self._round_to_standard_crate(discharge_crate_raw, discharge_crate_time)
+                                    if discharge_crate is not None:
+                                        discharge_crate_str = f"{discharge_crate:.2f}"
+                            else:
+                                logging.warning(f"No active mass found for cell {cell_id}, C-rate cannot be calculated")
+
+                        except Exception as e:
+                            logging.debug(f"Error calculating C-rate for cell {cell_id}, cycle {cycle}: {e}")
+
+                        break
 
             # Get plateau values for percentage calculations
             charge_1st = dqdv_data.get('Charge 1st Plateau (mAh/g)', 0) if dqdv_data else 0
