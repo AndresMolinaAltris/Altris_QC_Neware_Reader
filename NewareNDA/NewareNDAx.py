@@ -50,13 +50,50 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
             pass
 
         # Read active mass
+        active_mass = None
         try:
-            step = zf.extract('Step.xml', path=tmpdir)
-            with open(step, 'r', encoding='gb2312') as f:
-                config = ET.fromstring(f.read()).find('config')
-            active_mass = float(config.find('Head_Info/SCQ').attrib['Value'])
-            logger.info(f"Active mass: {active_mass/1000} mg")
-        except Exception:
+            step_xml_path = zf.extract('Step.xml', path=tmpdir)
+            with open(step_xml_path, 'r', encoding='gb2312') as f:
+                step_xml_root = ET.fromstring(f.read())
+            config = step_xml_root.find('config')
+            if config:
+                head_info = config.find('Head_Info')
+                if head_info is not None:
+                    # Try to calculate active mass from SpecificCap, Rate, and Current
+                    specific_cap_node = head_info.find('SpecificCap')
+                    if specific_cap_node is not None:
+                        specific_cap = float(specific_cap_node.attrib['Value'])
+                        if specific_cap > 0:
+                            step_info = config.find('Step_Info')
+                            if step_info is not None:
+                                for step_node in step_info:
+                                    limit_main = step_node.find('Limit/Main')
+                                    if limit_main is not None:
+                                        curr_node = limit_main.find('Curr')
+                                        rate_node = limit_main.find('Rate')
+                                        if curr_node is not None and rate_node is not None:
+                                            try:
+                                                curr = float(curr_node.attrib['Value'].replace(',', '.'))
+                                                rate = float(rate_node.attrib['Value'].replace(',', '.'))
+                                                if rate > 0:
+                                                    # mass(g) = Current(mA) / (C-Rate * SpecificCap(mAh/g))
+                                                    active_mass = curr / (rate * specific_cap)
+                                                    logger.info(f"Calculated active mass: {active_mass} g")
+                                                    break  # Exit after first successful calculation
+                                            except (ValueError, ZeroDivisionError):
+                                                continue # Try next step
+
+
+                    # Fallback to original method if calculation failed
+                    if active_mass is None:
+                        scq_node = head_info.find('SCQ')
+                        if scq_node is not None:
+                            active_mass_mg = float(scq_node.attrib['Value'])
+                            active_mass = active_mass_mg / 1000.0 # Convert mg to g
+                            logger.info(f"Found active mass (SCQ): {active_mass} g")
+
+        except Exception as e:
+            logger.warning(f"Could not determine active mass: {e}")
             pass
 
         # Read aux channel mapping from TestInfo.xml
@@ -128,6 +165,9 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
 
     if software_cycle_number:
         data_df['Cycle'] = _generate_cycle_number(data_df, cycle_mode)
+
+    if active_mass is not None:
+        data_df.attrs['active_mass'] = active_mass
 
     return data_df.astype(dtype=dtype_dict)
 
@@ -333,50 +373,21 @@ def _read_ndc_11_filetype_5(mm):
     # Read data records
     aux = []
     mm.seek(header)
+    while mm.tell() < mm_size:
+        bytes = mm.read(record_len)
+        for i in struct.iter_unpack('<cfh', bytes[132:-2]):
+            if i[0] == b'\x65':
+                aux.append([i[1]/10000, i[2]/10])
 
-    if mm[header+132:header+133] == b'\x65':
-        while mm.tell() < mm_size:
-            bytes = mm.read(record_len)
-            for i in struct.iter_unpack('<cfh', bytes[132:-2]):
-                if i[0] == b'\x65':
-                    aux.append([i[1]/10000, i[2]/10])
-
-        # Create DataFrame
-        aux_df = pd.DataFrame(aux, columns=['V', 'T'])
-        aux_df['Index'] = aux_df.index + 1
-
-    elif mm[header+132:header+133] == b'\x74':
-        while mm.tell() < mm_size:
-            bytes = mm.read(record_len)
-            for i in struct.iter_unpack('<cib29sh51s', bytes[132:-4]):
-                if i[0] == b'\x74':
-                    aux.append([i[1], i[2], i[4]/10])
-
-        # Create DataFrame
-        aux_df = pd.DataFrame(aux, columns=['Index', 'Aux', 'T'])
+    # Create DataFrame
+    aux_df = pd.DataFrame(aux, columns=['V', 'T'])
+    aux_df['Index'] = aux_df.index + 1
 
     return aux_df
 
 
 def _read_ndc_11_filetype_7(mm):
-    mm_size = mm.size()
-    record_len = 4096
-    header = 4096
-
-    # Read data records
-    rec = []
-    mm.seek(header)
-    while mm.tell() < mm_size:
-        bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<ii16sb12s', bytes[132:-5]):
-            [Cycle, Step_Index, Status] = [i[0], i[1], i[3]]
-            if Step_Index != 0:
-                rec.append([Cycle+1, Step_Index, state_dict[Status]])
-
-    # Create DataFrame
-    df = pd.DataFrame(rec, columns=['Cycle', 'Step_Index', 'Status'])
-    df['Step'] = df.index + 1
-    return df
+    return _read_ndc_11_filetype_7(mm)
 
 
 def _read_ndc_11_filetype_18(mm):
@@ -389,7 +400,7 @@ def _read_ndc_11_filetype_18(mm):
     mm.seek(header)
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<isffff12siii2s', bytes[132:-63]):
+        for i in struct.iter_unpack('<isffff12siii2s', bytes[132:-56]):
             Time = i[0]
             [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
             [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
@@ -527,6 +538,7 @@ def _bytes_to_list_ndc(bytes):
 
 def _aux_bytes_65_to_list_ndc(bytes):
     """Helper function for intepreting auxiliary records"""
+
     [Aux] = struct.unpack('<B', bytes[3:4])
     [Index] = struct.unpack('<I', bytes[8:12])
     [T] = struct.unpack('<h', bytes[41:43])

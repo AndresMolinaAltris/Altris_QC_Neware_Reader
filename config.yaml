@@ -5,8 +5,9 @@ data_path: "C:/Users/AndresMolina/OneDrive - Altris AB/Neware_Raw_Data"
 
 
 # Path to the cell database Excel file
-cell_database_path: "C:/Users/AndresMolina/Documents/01_Data/Labscale cell specifications.xlsx"
+#cell_database_path: "C:/Users/AndresMolina/Documents/01_Data/Labscale cell specifications.xlsx"
 #cell_database_path: "C:/Users/AndresMolina/OneDrive - Altris AB/Jonas H - Labscale cell specifications.xlsx"
+cell_database_path: "C:/Users/AndresMolina/OneDrive - Altris AB/MD - Kungsgatan - Echem documents/CHC- Electrode spec.xlsx"
 
 # Whether to use the GUI file selector (True) or scan directory (False)
 use_gui: true
