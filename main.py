@@ -7,6 +7,7 @@ from common.project_imports import (
     CellDatabase, NewarePlotter, FileSelector,
     configure_logging, DataLoader
 )
+from constants import COL_CYCLE
 
 
 @dataclass
@@ -73,13 +74,18 @@ def _extract_features_from_files(data_loader, ndax_file_list, db, cycles_to_proc
             logging.warning(f"MAIN. No data available for {filename_stem}")
             continue
 
-        # Extract active mass
-        mass = db.get_mass(cell_ID)
-        if mass is None or mass <= 0:
-            logging.warning(f"MAIN. No mass found for cell {cell_ID}, using 1.0g")
-            mass = 1.0
+        # Extract active mass: prefer NDAX metadata (already in memory), fall back to database
+        ndax_mass = df.attrs.get('active_mass')
+        if ndax_mass is not None and ndax_mass > 0:
+            mass = ndax_mass
+            logging.debug(f"MAIN. Using active mass from NDAX metadata for {cell_ID}: {mass}g")
         else:
-            logging.debug(f"MAIN. Mass for cell {cell_ID} is {mass}g")
+            mass = db.get_mass(cell_ID)
+            if mass is not None and mass > 0:
+                logging.debug(f"MAIN. Using active mass from database for {cell_ID}: {mass}g")
+            else:
+                logging.warning(f"MAIN. No mass found for cell {cell_ID}, using 1.0g")
+                mass = 1.0
 
         # Determine which cycles to process
         if cycles_to_process is None:
@@ -126,7 +132,8 @@ def _extract_features_from_files(data_loader, ndax_file_list, db, cycles_to_proc
 
                 # Extract plateau statistics if requested
                 if extract_plateau_stats:
-                    plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass)
+                    c_rate = DQDVAnalysis._calculate_crate_for_cycle(df, cycle, mass)
+                    plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass, c_rate=c_rate)
                     if plateau_data:
                         plateau_data["File"] = cell_ID
                         plateau_data["Cycle"] = cycle
@@ -248,6 +255,8 @@ def process_files(ndax_file_list,
             # Extract plateau statistics
             if dqdv_fig:
                 logging.debug("MAIN.Extracting plateau statistics...")
+
+                # C-rate is now calculated per cycle inside extract_plateaus_batch
                 dqdv_analyzer = DQDVAnalysis("plateau_extractor")
                 plateau_stats = dqdv_analyzer.extract_plateaus_batch(
                     data_loader,
@@ -338,13 +347,10 @@ def main():
     enable_plotting = config.get("enable_plotting", True)  # New config option for plotting
     plots_dir = config.get("plots_directory", "plots")  # New config option for plot save directory
 
-    # Load cell database with active mass (only once)
-    logging.debug("MAIN. Loading cell database...")
-    start_time = time.time()
+    # Set cell database path for lazy loading (only loaded when NDAX metadata is missing)
     db = CellDatabase.get_instance()
-    db.load_database(cell_database)
-    elapsed = time.time() - start_time
-    logging.debug(f"MAIN. Database loaded in {elapsed:.2f} seconds")
+    db.set_database_path(cell_database)
+    logging.debug("MAIN. Cell database path set (will load on demand)")
 
     # Keep all processed features
     all_processed_features = []

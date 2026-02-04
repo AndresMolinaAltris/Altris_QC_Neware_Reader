@@ -9,6 +9,7 @@ class CellDatabase:
         self.loading_data = {}      # Extract electrode loading level
         self._lowercase_keys = {}   # Maps lowercase cell_id to actual key for fast case-insensitive lookup
         self._is_loaded = False
+        self._database_path = None  # Stored for lazy loading
         self._cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 
         # Create cache directory if it doesn't exist
@@ -33,8 +34,18 @@ class CellDatabase:
 
         return os.path.join(self._cache_dir, f"cell_db_cache_{hash_id}.pkl")
 
+    def set_database_path(self, excel_path):
+        """Store the database path for lazy loading. Does not load the database."""
+        self._database_path = excel_path
+
+    def _ensure_loaded(self):
+        """Load the database if a path was set but not yet loaded."""
+        if not self._is_loaded and self._database_path:
+            self.load_database(self._database_path)
+
     def load_database(self, excel_path, force_reload=False):
         """Load and cache the entire cell database at once"""
+        self._database_path = excel_path
         if self._is_loaded and not force_reload:
             return
 
@@ -229,9 +240,11 @@ class CellDatabase:
             print(f"Warning: Could not save database cache: {e}")
 
     def get_mass(self, cell_id):
-        """Quick lookup of cell mass from cache"""
+        """Quick lookup of cell mass from cache. Lazy-loads database if path was set."""
         if not self._is_loaded:
-            raise RuntimeError("Database not loaded. Call load_database() first.")
+            self._ensure_loaded()
+        if not self._is_loaded:
+            return None
 
         # Try to find with exact match first
         cell_id_str = str(cell_id).strip()

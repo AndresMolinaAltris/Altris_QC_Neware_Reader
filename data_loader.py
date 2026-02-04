@@ -1,5 +1,4 @@
 from common.imports import pd, os, logging, Path, Dict, List, Optional
-import yaml
 import re
 from NewareNDA.NewareNDAx import read_ndax
 from cell_database import CellDatabase
@@ -49,36 +48,25 @@ class DataLoader:
                 logging.debug(f"DATA_LOADER: Loading file: {os.path.basename(file_path)}")
                 df = read_ndax(file_path, software_cycle_number=True)
 
-                # Fallback logic for active mass
+                # Fallback logic for active mass: use CellDatabase (lazy-loaded singleton)
                 if df.attrs.get('active_mass') is None:
-                    logging.debug(f"DATA_LOADER: Active mass not found in {os.path.basename(file_path)}, attempting fallback.")
-                    # Load config.yaml
+                    logging.debug(f"DATA_LOADER: Active mass not found in {os.path.basename(file_path)}, attempting database fallback.")
                     try:
-                        with open('config.yaml', 'r') as f:
-                            config = yaml.safe_load(f)
-                        cell_database_path = config.get('cell_database_path')
-
-                        if cell_database_path and os.path.exists(cell_database_path):
+                        filename_stem = Path(file_path).stem
+                        match = re.match(r'^(\d+)_', filename_stem)
+                        if match:
+                            cell_id = match.group(1)
                             db = CellDatabase.get_instance()
-                            db.load_database(cell_database_path) # Ensure database is loaded
-
-                            # Extract cell_id from filename
-                            filename_stem = Path(file_path).stem
-                            match = re.match(r'^(\d+)_', filename_stem)
-                            if match:
-                                cell_id = match.group(1)
-                                mass_from_db = db.get_mass(cell_id)
-                                if mass_from_db is not None:
-                                    df.attrs['active_mass'] = mass_from_db
-                                    logging.debug(f"DATA_LOADER: Fallback successful for {os.path.basename(file_path)}, mass: {mass_from_db:.4f} g")
-                                else:
-                                    logging.warning(f"DATA_LOADER: Fallback failed for {os.path.basename(file_path)}: cell_ID {cell_id} not found in database.")
+                            mass_from_db = db.get_mass(cell_id)
+                            if mass_from_db is not None:
+                                df.attrs['active_mass'] = mass_from_db
+                                logging.debug(f"DATA_LOADER: Fallback successful for {os.path.basename(file_path)}, mass: {mass_from_db:.4f} g")
                             else:
-                                logging.warning(f"DATA_LOADER: Fallback failed for {os.path.basename(file_path)}: could not extract cell_ID from filename.")
+                                logging.warning(f"DATA_LOADER: Fallback failed for {os.path.basename(file_path)}: cell_ID {cell_id} not found in database.")
                         else:
-                            logging.warning(f"DATA_LOADER: Fallback failed for {os.path.basename(file_path)}: cell_database_path not found or invalid in config.yaml.")
-                    except Exception as config_e:
-                        logging.error(f"DATA_LOADER: Error during active mass fallback for {os.path.basename(file_path)}: {config_e}")
+                            logging.warning(f"DATA_LOADER: Fallback failed for {os.path.basename(file_path)}: could not extract cell_ID from filename.")
+                    except Exception as e:
+                        logging.error(f"DATA_LOADER: Error during active mass fallback for {os.path.basename(file_path)}: {e}")
                 
                 # Cache the data
                 self._cache[file_path] = df

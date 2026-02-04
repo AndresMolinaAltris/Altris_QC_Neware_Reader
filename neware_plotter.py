@@ -601,12 +601,15 @@ class NewarePlotter:
             if df is None:
                 continue
 
-            # Get cell ID and mass
+            # Get cell ID and mass: prefer NDAX metadata, fall back to database
             cell_ID = extract_cell_id(filename_stem)
-            mass = self.db.get_mass(cell_ID)
-
-            if mass is None or mass <= 0:
-                mass = 1.0
+            ndax_mass = df.attrs.get('active_mass')
+            if ndax_mass is not None and ndax_mass > 0:
+                mass = ndax_mass
+            else:
+                mass = self.db.get_mass(cell_ID)
+                if mass is None or mass <= 0:
+                    mass = 1.0
 
             # Create DQDVAnalysis instance
             dqdv_analyzer = DQDVAnalysis("transition_extractor")
@@ -617,20 +620,13 @@ class NewarePlotter:
                     continue
 
                 try:
-                    # Get separate voltage ranges from GUI if available
-                    charge_voltage_range = (2.5, 3.5)  # Default
-                    discharge_voltage_range = (2.5, 3.5)  # Default
+                    # Calculate C-rate for this cycle to resolve voltage ranges dynamically
+                    c_rate = DQDVAnalysis._calculate_crate_for_cycle(df, cycle, mass)
 
-                    if hasattr(self, '_gui_charge_voltage_range'):
-                        charge_voltage_range = self._gui_charge_voltage_range
-                    if hasattr(self, '_gui_discharge_voltage_range'):
-                        discharge_voltage_range = self._gui_discharge_voltage_range
-
-                    # Extract plateau data which includes transition voltages with separate ranges
+                    # Extract plateau data with C-rate dependent voltage ranges
                     plateau_data = dqdv_analyzer.extract_plateaus(
                         df, cycle, mass,
-                        charge_voltage_range=charge_voltage_range,
-                        discharge_voltage_range=discharge_voltage_range
+                        c_rate=c_rate
                     )
 
                     if plateau_data:
