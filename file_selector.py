@@ -648,14 +648,14 @@ class FileSelector:
                 # C-rate data (1 decimal place)
                 "Charge C-Rate": charge_crate_str,
                 "Discharge C-Rate": discharge_crate_str,
-                # Capacity metrics (1 decimal)
-                "Charge Cap (mAh)": f"{float(row.get('Charge Capacity (mAh)', 0)):.1f}" if pd.notnull(
+                # Capacity metrics (3 decimals)
+                "Charge Cap (mAh)": f"{float(row.get('Charge Capacity (mAh)', 0)):.3f}" if pd.notnull(
                     row.get('Charge Capacity (mAh)')) else "N/A",
-                "Discharge Cap (mAh)": f"{float(row.get('Discharge Capacity (mAh)', 0)):.1f}" if pd.notnull(
+                "Discharge Cap (mAh)": f"{float(row.get('Discharge Capacity (mAh)', 0)):.3f}" if pd.notnull(
                     row.get('Discharge Capacity (mAh)')) else "N/A",
-                "Specific Charge Cap (mAh/g)": f"{float(row.get('Specific Charge Capacity (mAh/g)', 0)):.1f}" if pd.notnull(
+                "Specific Charge Cap (mAh/g)": f"{float(row.get('Specific Charge Capacity (mAh/g)', 0)):.3f}" if pd.notnull(
                     row.get('Specific Charge Capacity (mAh/g)')) else "N/A",
-                "Specific Discharge Cap (mAh/g)": f"{float(row.get('Specific Discharge Capacity (mAh/g)', 0)):.1f}" if pd.notnull(
+                "Specific Discharge Cap (mAh/g)": f"{float(row.get('Specific Discharge Capacity (mAh/g)', 0)):.3f}" if pd.notnull(
                     row.get('Specific Discharge Capacity (mAh/g)')) else "N/A",
                 "Coulombic Eff (%)": f"{float(row.get('Coulombic Efficiency (%)', 0)):.1f}" if pd.notnull(
                     row.get('Coulombic Efficiency (%)')) else "N/A",
