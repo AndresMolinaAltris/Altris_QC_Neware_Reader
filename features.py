@@ -1,6 +1,12 @@
 from common.imports import os, np, pd, logging, Path
 from scipy.signal import savgol_filter, find_peaks
 from data_import import extract_cell_id
+from constants import (
+    STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, STATUS_REST,
+    CHARGE_STATUSES, DISCHARGE_STATUSES,
+    COL_CYCLE, COL_STEP, COL_STATUS, COL_VOLTAGE, COL_CURRENT, COL_TIME,
+    COL_CHARGE_CAPACITY, COL_DISCHARGE_CAPACITY
+)
 
 class Features:
     """
@@ -48,156 +54,90 @@ class Features:
         return pd.DataFrame(features, index=[0])
 
     def extract_internal_resistance_soc_0(self, df, features, cycle):
-        """
-        Extracts internal resistance at SOC = 0% from the dataset.
-        For cycle 1: looks at step 1 (initial rest)
-        For cycle 2+: dynamically finds rest step that occurs after discharge
-        """
+        label = "Internal Resistance at SOC 0 (Ohms)"
         try:
-            if int(cycle) == 1:
-                # For cycle 1, SOC 0% is at step 1 (initial rest)
-                idx = (df["Status"] == "Rest") & (df["Cycle"] == int(cycle)) & (df["Step"] == 1)
-            else:
-                # For cycles 2+, find rest step that occurs after discharge
-                cycle_data = df[df["Cycle"] == int(cycle)].copy()
-
-                if cycle_data.empty:
-                    features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                    return
-
-                # Sort by index to maintain chronological order
-                cycle_data = cycle_data.sort_index()
-
-                # Find rest steps that are preceded by discharge steps
-                rest_steps = []
-                prev_status = None
-
-                for _, row in cycle_data.iterrows():
-                    current_status = row["Status"]
-                    current_step = row["Step"]
-
-                    # If current is rest and previous was discharge, this is SOC 0%
-                    if (current_status == "Rest" and
-                            prev_status is not None and
-                            "DChg" in prev_status):
-                        rest_steps.append(current_step)
-
-                    prev_status = current_status
-
-                if not rest_steps:
-                    features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                    return
-
-                # Use the last rest step after discharge (in case there are multiple)
-                target_step = rest_steps[-1]
-                idx = ((df["Status"] == "Rest") &
-                       (df["Cycle"] == int(cycle)) &
-                       (df["Step"] == target_step))
-
-            if not idx.any():
-                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                return
-
-            # Find the last index of the rest period
-            rest_indices = df[idx].index
-            if len(rest_indices) == 0:
-                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                return
-
-            index = rest_indices[-1]
-
-            # Check if we have a next data point for calculation
-            if index + 1 >= len(df):
-                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                return
-
-            ocv = round(df["Voltage"][index], 4)
-            ocv_dV = round(df["Voltage"][index + 1], 4)
-            delta_current = abs(df["Current(mA)"][index + 1] - df["Current(mA)"][index])
-
-            if delta_current == 0:
-                features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-                return
-
-            delta_V = abs(ocv_dV - ocv)
-            internal_resistance = delta_V / (delta_current / 1000)
-            features["Internal Resistance at SOC 0 (Ohms)"] = round(internal_resistance, 4)
-
-        except Exception:
-            features["Internal Resistance at SOC 0 (Ohms)"] = np.nan
-
-    def extract_internal_resistance_soc_100(self, df, features, cycle):
-        """
-        Extracts internal resistance at SOC = 100% from the dataset.
-        Dynamically finds rest step that occurs after charge for all cycles
-        """
-        try:
-            cycle_data = df[df["Cycle"] == int(cycle)].copy()
-
+            cycle = int(cycle)
+            cycle_data = df[df["Cycle"] == cycle].copy()
             if cycle_data.empty:
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                features[label] = np.nan;
                 return
-
-            # Sort by index to maintain chronological order
             cycle_data = cycle_data.sort_index()
 
-            # Find rest steps that are preceded by charge steps
-            rest_steps = []
-            prev_status = None
-
-            for _, row in cycle_data.iterrows():
-                current_status = row["Status"]
-                current_step = row["Step"]
-
-                # If current is rest and previous was charge, this is SOC 100%
-                if (current_status == "Rest" and
-                        prev_status is not None and
-                        "Chg" in prev_status):
-                    rest_steps.append(current_step)
-
-                prev_status = current_status
-
-            if not rest_steps:
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
-                return
-
-            # Use the last rest step after charge (in case there are multiple)
-            target_step = rest_steps[-1]
-            idx = ((df["Status"] == "Rest") &
-                   (df["Cycle"] == int(cycle)) &
-                   (df["Step"] == target_step))
+            if cycle == 1:
+                idx = (df[COL_CYCLE] == 1) & (df[COL_STEP] == 1) & (df[COL_STATUS] == STATUS_REST)
+            else:
+                rest_steps, prev_status = [], None
+                for _, row in cycle_data.iterrows():
+                    if row[COL_STATUS] == STATUS_REST and prev_status in DISCHARGE_STATUSES:
+                        rest_steps.append(row[COL_STEP])
+                    prev_status = row[COL_STATUS]
+                if not rest_steps:
+                    features[label] = np.nan;
+                    return
+                target_step = rest_steps[-1]
+                idx = (df[COL_CYCLE] == cycle) & (df[COL_STEP] == target_step) & (df[COL_STATUS] == STATUS_REST)
 
             if not idx.any():
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                features[label] = np.nan;
+                return
+            index = df[idx].index[-1]
+            pos = df.index.get_loc(index)
+            if pos + 1 >= len(df):
+                features[label] = np.nan;
                 return
 
-            # Find the last index of the rest period
-            rest_indices = df[idx].index
-            if len(rest_indices) == 0:
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
-                return
-
-            index = rest_indices[-1]
-
-            # Check if we have a next data point for calculation
-            if index + 1 >= len(df):
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
-                return
-
-            ocv = round(df["Voltage"][index], 4)
-            ocv_dV = round(df["Voltage"][index + 1], 4)
-            delta_current = abs(df["Current(mA)"][index + 1] - df["Current(mA)"][index])
-
+            ocv = float(df[COL_VOLTAGE].iloc[pos])
+            ocv_dV = float(df[COL_VOLTAGE].iloc[pos + 1])
+            delta_current = abs(float(df[COL_CURRENT].iloc[pos + 1]) - float(df[COL_CURRENT].iloc[pos]))
             if delta_current == 0:
-                features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+                features[label] = np.nan;
                 return
 
-            delta_V = abs(ocv_dV - ocv)
-            internal_resistance = delta_V / (delta_current / 1000)
-            features["Internal Resistance at SOC 100 (Ohms)"] = round(internal_resistance, 4)
-
+            features[label] = round(abs(ocv_dV - ocv) / (delta_current / 1000), 4)
         except Exception:
-            features["Internal Resistance at SOC 100 (Ohms)"] = np.nan
+            features[label] = np.nan
+
+    def extract_internal_resistance_soc_100(self, df, features, cycle):
+        label = "Internal Resistance at SOC 100 (Ohms)"
+        try:
+            cycle = int(cycle)
+            cycle_data = df[df["Cycle"] == cycle].copy()
+            if cycle_data.empty:
+                features[label] = np.nan;
+                return
+            cycle_data = cycle_data.sort_index()
+
+            rest_steps, prev_status = [], None
+            for _, row in cycle_data.iterrows():
+                if row[COL_STATUS] == STATUS_REST and prev_status in CHARGE_STATUSES:
+                    rest_steps.append(row[COL_STEP])
+                prev_status = row[COL_STATUS]
+            if not rest_steps:
+                features[label] = np.nan;
+                return
+
+            target_step = rest_steps[-1]
+            idx = (df[COL_CYCLE] == cycle) & (df[COL_STEP] == target_step) & (df[COL_STATUS] == STATUS_REST)
+            if not idx.any():
+                features[label] = np.nan;
+                return
+
+            index = df[idx].index[-1]
+            pos = df.index.get_loc(index)
+            if pos + 1 >= len(df):
+                features[label] = np.nan;
+                return
+
+            ocv = float(df[COL_VOLTAGE].iloc[pos])
+            ocv_dV = float(df[COL_VOLTAGE].iloc[pos + 1])
+            delta_current = abs(float(df[COL_CURRENT].iloc[pos + 1]) - float(df[COL_CURRENT].iloc[pos]))
+            if delta_current == 0:
+                features[label] = np.nan;
+                return
+
+            features[label] = round(abs(ocv_dV - ocv) / (delta_current / 1000), 4)
+        except Exception:
+            features[label] = np.nan
 
     def extract_charge_capacity(self, df, features, cycle, mass=1.0):
         """
@@ -209,8 +149,8 @@ class Features:
         :param mass: Float representing the mass of active material (default: 1.0 g).
         """
         try:
-            idx = np.logical_and(df["Status"] == "CC_Chg", df["Cycle"] == int(cycle))
-            initial_charge_capacity = df[idx]["Charge_Capacity(mAh)"].max()
+            idx = np.logical_and(df[COL_STATUS] == STATUS_CC_CHARGE, df[COL_CYCLE] == int(cycle))
+            initial_charge_capacity = df[idx][COL_CHARGE_CAPACITY].max()
             initial_specific_charge_capacity = initial_charge_capacity / mass
             features["Charge Capacity (mAh)"] = round(initial_charge_capacity, 3)
             features["Specific Charge Capacity (mAh/g)"] = round(initial_specific_charge_capacity, 1)
@@ -228,8 +168,8 @@ class Features:
         :param mass: Float representing the mass of active material (default: 1.0 g).
         """
         try:
-            idx = np.logical_and(df["Status"] == "CC_DChg", df["Cycle"] == int(cycle))
-            initial_discharge_capacity = df[idx]["Discharge_Capacity(mAh)"].max()
+            idx = np.logical_and(df[COL_STATUS] == STATUS_CC_DISCHARGE, df[COL_CYCLE] == int(cycle))
+            initial_discharge_capacity = df[idx][COL_DISCHARGE_CAPACITY].max()
             initial_specific_discharge_capacity = initial_discharge_capacity / mass
             features["Discharge Capacity (mAh)"] = round(initial_discharge_capacity, 3)
             features["Specific Discharge Capacity (mAh/g)"] = round(initial_specific_discharge_capacity, 1)
@@ -266,8 +206,65 @@ class DQDVAnalysis:
         Handles missing data by assigning NaN to failed extractions.
         """
 
+    # C-rate dependent voltage ranges for plateau detection
+    # As C-rate increases, charge peaks shift to higher potentials (overpotential)
+    # and discharge peaks shift to lower potentials
+    # Format: c_rate: ((charge_min, charge_max), (discharge_min, discharge_max))
+    #
+    # CALIBRATION STATUS:
+    # - 0.1-0.2C: Experimentally validated from 136 samples (Form-Rate protocols)
+    #   Observed peaks: charge 2.9-3.4V, discharge 2.9-3.3V
+    # - 0.33-10C: Extrapolated from electrochemical principles (~50-100mV/C overpotential)
+    #   REQUIRES VALIDATION with actual high-rate experimental data
+    VOLTAGE_RANGES_BY_CRATE = {
+        0.1:  ((2.9, 3.6), (2.9, 3.6)),   # Calibrated: n=136 samples, mean peaks ~3.2-3.3V
+        0.2:  ((2.9, 3.6), (2.9, 3.6)),   # Calibrated: minimal overpotential increase from 0.1C
+        0.33: ((2.8, 3.7), (2.8, 3.6)),   # Extrapolated: ~50mV charge shift, ~50mV discharge shift
+        0.5:  ((2.8, 3.7), (2.7, 3.6)),   # Extrapolated: ~100mV charge shift, ~100mV discharge shift
+        1.0:  ((2.7, 3.8), (2.6, 3.6)),   # Extrapolated: ~150mV shifts (literature-based)
+        2.0:  ((2.6, 3.9), (2.4, 3.6)),   # Extrapolated: ~250mV shifts
+        3.0:  ((2.5, 4.0), (2.3, 3.6)),   # Extrapolated: ~350mV shifts
+        5.0:  ((2.4, 4.2), (2.1, 3.6)),   # Extrapolated: ~500mV shifts
+        10.0: ((2.2, 4.4), (1.8, 3.6)),   # Extrapolated: ~700mV shifts (extreme rates)
+    }
+
     def __init__(self, input_key):
         self.input_key = input_key
+
+    @staticmethod
+    def get_voltage_ranges(c_rate):
+        """
+        Get appropriate voltage ranges for plateau detection based on C-rate.
+
+        As C-rate increases, overpotential causes charge peaks to shift to higher
+        voltages and discharge peaks to shift to lower voltages. This method
+        returns expanded voltage windows for higher C-rates.
+
+        Args:
+            c_rate: Float representing the C-rate (e.g., 0.1, 1.0, 5.0)
+                   Can be None, in which case returns default (2.5, 3.5) ranges
+
+        Returns:
+            Tuple of (charge_voltage_range, discharge_voltage_range)
+            where each range is a tuple (min_voltage, max_voltage)
+        """
+        if c_rate is None:
+            # Default to low C-rate ranges
+            logging.debug("DQDVAnalysis.get_voltage_ranges: c_rate is None, using default (2.5, 3.5)")
+            return ((2.5, 3.5), (2.5, 3.5))
+
+        # If exact match exists, use it
+        if c_rate in DQDVAnalysis.VOLTAGE_RANGES_BY_CRATE:
+            ranges = DQDVAnalysis.VOLTAGE_RANGES_BY_CRATE[c_rate]
+            logging.debug(f"DQDVAnalysis.get_voltage_ranges: c_rate={c_rate} (exact match), ranges={ranges}")
+            return ranges
+
+        # Find nearest standard C-rate
+        standard_rates = sorted(DQDVAnalysis.VOLTAGE_RANGES_BY_CRATE.keys())
+        nearest = min(standard_rates, key=lambda x: abs(x - c_rate))
+        ranges = DQDVAnalysis.VOLTAGE_RANGES_BY_CRATE[nearest]
+        logging.debug(f"DQDVAnalysis.get_voltage_ranges: c_rate={c_rate} -> nearest={nearest}, ranges={ranges}")
+        return ranges
 
     def _calculate_dqdv(self, data, direction, mass=1.0, smoothing_method='sma', window_length=15, weights=None,
                         pre_smooth=True):
@@ -298,30 +295,29 @@ class DQDVAnalysis:
 
         # Sort by voltage to ensure proper calculation
         if direction == 'charge':
-            data = data.sort_values('Voltage', ascending=True)
-            capacity_col = 'Charge_Capacity(mAh)'
+            data = data.sort_values(COL_VOLTAGE, ascending=True)
+            capacity_col = COL_CHARGE_CAPACITY
         else:
-            data = data.sort_values('Voltage', ascending=False)
-            capacity_col = 'Discharge_Capacity(mAh)'
+            data = data.sort_values(COL_VOLTAGE, ascending=False)
+            capacity_col = COL_DISCHARGE_CAPACITY
 
         # Drop duplicates to reduce noise
-        data = data.drop_duplicates(subset=['Voltage'])
+        data = data.drop_duplicates(subset=[COL_VOLTAGE])
         data = data.reset_index(drop=True)
 
         # Get voltage and capacity data
-        voltage = data['Voltage'].values
+        voltage = data[COL_VOLTAGE].values
         capacity = data[capacity_col].values
 
         # Check if this is high C-rate discharge data
         skip_smoothing = False
-        if direction == 'discharge' and 'Time' in data.columns and len(data) > 10:
+        if direction == 'discharge' and COL_TIME in data.columns and len(data) > 10:
             # Calculate average time step between measurements
-            time_steps = data['Time'].diff().dropna()
+            time_steps = data[COL_TIME].diff().dropna()
             avg_time_step = time_steps.mean()
 
             # Detect if this is high C-rate discharge (fast acquisition)
-            is_high_crate = avg_time_step < 6.0  # Threshold of 6 seconds based on analysis of the data
-
+            is_high_crate = avg_time_step < 1.0  # Threshold of 6 seconds based on analysis of the data
             if is_high_crate:
                 # For high C-rate discharge, skip smoothing entirely
                 skip_smoothing = True
@@ -422,15 +418,15 @@ class DQDVAnalysis:
         """
         try:
             # Filter data for the specified cycle
-            cycle_df = df[df["Cycle"] == int(cycle)].copy()
+            cycle_df = df[df[COL_CYCLE] == int(cycle)].copy()
 
             # Define a minimum number of points required for proper calculation
             if len(cycle_df) < 10:
                 return None
 
             # Separate charge and discharge data
-            charge_data = cycle_df[cycle_df["Status"] == "CC_Chg"].copy()
-            discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
+            charge_data = cycle_df[cycle_df[COL_STATUS] == STATUS_CC_CHARGE].copy()
+            discharge_data = cycle_df[cycle_df[COL_STATUS] == STATUS_CC_DISCHARGE].copy()
 
             # Get dQ/dV data for charge and discharge
             charge_dqdv = self._calculate_dqdv(charge_data, 'charge', mass, pre_smooth=True)
@@ -541,8 +537,13 @@ class DQDVAnalysis:
             print(f"Moving average smoothing failed: {e}")
             return data
 
-    def extract_plateaus(self, df, cycle, mass=1.0, transition_voltage=None, charge_voltage_range=(3.1, 3.3),
-                         discharge_voltage_range=(3.1, 3.3)):
+    def extract_plateaus(self, df,
+                         cycle,
+                         mass=1.0,
+                         transition_voltage=None,
+                         charge_voltage_range=None,
+                         discharge_voltage_range=None,
+                         c_rate=None):
         """
         Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
 
@@ -556,7 +557,11 @@ class DQDVAnalysis:
             transition_voltage: Optional float to specify the transition voltage
                 If None, will use inflection point detection or default to 3.2V
             charge_voltage_range: Tuple with min and max voltage for charge inflection point detection
+                If None, will be resolved from c_rate parameter
             discharge_voltage_range: Tuple with min and max voltage for discharge inflection point detection
+                If None, will be resolved from c_rate parameter
+            c_rate: Optional float representing the C-rate for this cycle
+                Used to automatically determine appropriate voltage ranges if not explicitly provided
 
         Returns:
             Dictionary containing plateau capacities for both charge and discharge
@@ -564,6 +569,15 @@ class DQDVAnalysis:
         logging.debug("FEATURES.extract_plateaus started")
 
         try:
+            # Resolve voltage ranges from c_rate if not explicitly provided
+            if charge_voltage_range is None or discharge_voltage_range is None:
+                resolved_charge, resolved_discharge = self.get_voltage_ranges(c_rate)
+                if charge_voltage_range is None:
+                    charge_voltage_range = resolved_charge
+                if discharge_voltage_range is None:
+                    discharge_voltage_range = resolved_discharge
+                logging.debug(f"extract_plateaus: Using c_rate={c_rate} -> charge_range={charge_voltage_range}, discharge_range={discharge_voltage_range}")
+
             # Define default transition voltage
             default_transition_voltage = 3.2  # V
 
@@ -602,24 +616,24 @@ class DQDVAnalysis:
                 logging.debug(f"Using provided transition voltage: {transition_voltage:.4f}V")
 
             # Filter data for the specified cycle
-            cycle_df = df[df["Cycle"] == int(cycle)].copy()
+            cycle_df = df[df[COL_CYCLE] == int(cycle)].copy()
 
             # Initialize result dictionary
             result = {}
 
             # Process charge data
-            charge_data = cycle_df[cycle_df["Status"] == "CC_Chg"].copy()
+            charge_data = cycle_df[cycle_df[COL_STATUS] == STATUS_CC_CHARGE].copy()
             if not charge_data.empty:
                 # Sort by voltage to ensure proper calculation
-                charge_data = charge_data.sort_values('Voltage', ascending=True)
+                charge_data = charge_data.sort_values(COL_VOLTAGE, ascending=True)
 
                 # Get initial and final capacity values
-                initial_capacity = charge_data["Charge_Capacity(mAh)"].iloc[0]
-                final_capacity = charge_data["Charge_Capacity(mAh)"].iloc[-1]
+                initial_capacity = charge_data[COL_CHARGE_CAPACITY].iloc[0]
+                final_capacity = charge_data[COL_CHARGE_CAPACITY].iloc[-1]
 
                 # Find the nearest point to transition voltage
-                transition_idx = (charge_data['Voltage'] - charge_transition).abs().idxmin()
-                transition_capacity = charge_data.loc[transition_idx, "Charge_Capacity(mAh)"]
+                transition_idx = (charge_data[COL_VOLTAGE] - charge_transition).abs().idxmin()
+                transition_capacity = charge_data.loc[transition_idx, COL_CHARGE_CAPACITY]
 
                 # Calculate plateau capacities
                 first_plateau = (transition_capacity - initial_capacity) / mass
@@ -632,18 +646,18 @@ class DQDVAnalysis:
                 result["Charge Transition Voltage (V)"] = round(charge_transition, 4)
 
             # Process discharge data
-            discharge_data = cycle_df[cycle_df["Status"] == "CC_DChg"].copy()
+            discharge_data = cycle_df[cycle_df[COL_STATUS] == STATUS_CC_DISCHARGE].copy()
             if not discharge_data.empty:
                 # Sort by voltage to ensure proper calculation
-                discharge_data = discharge_data.sort_values('Voltage', ascending=False)
+                discharge_data = discharge_data.sort_values(COL_VOLTAGE, ascending=False)
 
                 # Get initial and final capacity values
-                initial_capacity = discharge_data["Discharge_Capacity(mAh)"].iloc[0]
-                final_capacity = discharge_data["Discharge_Capacity(mAh)"].iloc[-1]
+                initial_capacity = discharge_data[COL_DISCHARGE_CAPACITY].iloc[0]
+                final_capacity = discharge_data[COL_DISCHARGE_CAPACITY].iloc[-1]
 
                 # Find the nearest point to transition voltage
-                transition_idx = (discharge_data['Voltage'] - discharge_transition).abs().idxmin()
-                transition_capacity = discharge_data.loc[transition_idx, "Discharge_Capacity(mAh)"]
+                transition_idx = (discharge_data[COL_VOLTAGE] - discharge_transition).abs().idxmin()
+                transition_capacity = discharge_data.loc[transition_idx, COL_DISCHARGE_CAPACITY]
 
                 # Calculate plateau capacities
                 first_plateau = (transition_capacity - initial_capacity) / mass
@@ -672,8 +686,54 @@ class DQDVAnalysis:
                 "Discharge Total (mAh/g)": np.nan
             }
 
-    def extract_plateaus_batch(self, data_loader, db, file_list, selected_cycles=None, charge_voltage_range=(3.1, 3.3),
-                               discharge_voltage_range=(3.1, 3.3)):
+    @staticmethod
+    def _calculate_crate_for_cycle(df, cycle, active_mass_g):
+        """
+        Calculate C-rate for a specific cycle using current and active mass.
+
+        Args:
+            df: DataFrame with battery data
+            cycle: Cycle number to calculate C-rate for
+            active_mass_g: Active mass in grams
+
+        Returns:
+            Float representing C-rate, or None if calculation fails
+        """
+        if active_mass_g is None or active_mass_g <= 0:
+            return None
+
+        SPECIFIC_CAPACITY = 150  # mAh/g - hardcoded for cathode material
+
+        try:
+            charge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_CHARGE)]
+            if not charge_data.empty:
+                charge_current = abs(charge_data[COL_CURRENT].mean())
+                nominal_capacity = active_mass_g * SPECIFIC_CAPACITY
+                c_rate = charge_current / nominal_capacity if nominal_capacity > 0 else None
+
+                # Round to nearest standard C-rate if within 15% tolerance
+                standard_rates = [0.1, 0.2, 0.33, 0.5, 1, 2, 3, 5, 10]
+                if c_rate is not None:
+                    nearest = min(standard_rates, key=lambda x: abs(x - c_rate))
+                    if abs(c_rate - nearest) / nearest <= 0.15:
+                        return nearest
+
+                return c_rate
+
+            return None
+
+        except Exception as e:
+            logging.debug(f"DQDVAnalysis: Error calculating C-rate for cycle {cycle}: {e}")
+            return None
+
+    def extract_plateaus_batch(self,
+                               data_loader,
+                               db,
+                               file_list,
+                               selected_cycles=None,
+                               charge_voltage_range=None,
+                               discharge_voltage_range=None,
+                               c_rates=None):
         """
         Extract plateau capacity statistics from DataLoader cache for multiple files and cycles.
 
@@ -683,7 +743,12 @@ class DQDVAnalysis:
             file_list: List of file paths to process
             selected_cycles: List of cycles to extract plateaus for (default: [1, 2, 3])
             charge_voltage_range: Tuple with min and max voltage for charge inflection point detection
+                If None, will be resolved from c_rate
             discharge_voltage_range: Tuple with min and max voltage for discharge inflection point detection
+                If None, will be resolved from c_rate
+            c_rates: Optional dict mapping filename to per-cycle C-rates
+                {filename: {cycle: c_rate}} or legacy {filename: c_rate}
+                If None, C-rate will be calculated per cycle internally
 
         Returns:
             List of dictionaries with plateau capacity statistics for GUI display
@@ -709,14 +774,19 @@ class DQDVAnalysis:
                 logging.debug(f"No data available for {filename_stem}")
                 continue
 
-            # Get cell ID and mass for specific capacity calculations
+            # Get cell ID and mass: prefer NDAX metadata (already in memory), fall back to database
             cell_ID = extract_cell_id(filename_stem)
-            mass = db.get_mass(cell_ID)
-
-            # Handle None mass consistently
-            if mass is None or mass <= 0:
-                logging.warning(f"No mass found for cell ID {cell_ID}, using 1.0g for plateau extraction")
-                mass = 1.0
+            ndax_mass = df.attrs.get('active_mass')
+            if ndax_mass is not None and ndax_mass > 0:
+                mass = ndax_mass
+                logging.debug(f"Using active mass from NDAX metadata for {cell_ID}: {mass}g")
+            else:
+                mass = db.get_mass(cell_ID)
+                if mass is not None and mass > 0:
+                    logging.debug(f"Using active mass from database for {cell_ID}: {mass}g")
+                else:
+                    logging.warning(f"No mass found for cell ID {cell_ID}, using 1.0g for plateau extraction")
+                    mass = 1.0
 
             # Extract plateaus for each selected cycle
             for cycle in selected_cycles:
@@ -726,10 +796,15 @@ class DQDVAnalysis:
                     continue
 
                 try:
-                    # Extract plateau capacities using existing method with separate voltage ranges
+                    # Calculate C-rate for this specific cycle
+                    cycle_c_rate = self._calculate_crate_for_cycle(df, cycle, mass)
+                    logging.debug(f"extract_plateaus_batch: Calculated c_rate={cycle_c_rate} for {filename_stem}, cycle {cycle}")
+
+                    # Extract plateau capacities with per-cycle C-rate
                     plateau_data = self.extract_plateaus(df, cycle, mass,
                                                          charge_voltage_range=charge_voltage_range,
-                                                         discharge_voltage_range=discharge_voltage_range)
+                                                         discharge_voltage_range=discharge_voltage_range,
+                                                         c_rate=cycle_c_rate)
 
                     if plateau_data:
                         # Add file and cycle information
@@ -744,7 +819,9 @@ class DQDVAnalysis:
         logging.debug("DQDVAnalysis.extract_plateaus_batch finished")
         return stats
 
-    def find_transition_voltage(self, df, cycle, voltage_range=(3.1, 3.3)):
+    def find_transition_voltage(self, df,
+                                cycle,
+                                voltage_range=(2.5, 3.5)):
         """
         Find transition voltage where dQ/dV is flattest (closest to zero).
 
@@ -790,9 +867,14 @@ class DQDVAnalysis:
 
         return result
 
-    def find_inflection_point(self, df, cycle, charge_voltage_range=(3.1, 3.3), discharge_voltage_range=(3.1, 3.3)):
+    def find_inflection_point(self,
+                              df,
+                              cycle,
+                              charge_voltage_range=(2.5, 3.5),
+                              discharge_voltage_range=(2.5, 3.5)):
         """
         Find inflection point using dV/dQ gradient analysis with peak detection.
+        Uses capacity constraints (35-65% of total capacity) followed by voltage range filtering.
 
         Args:
             df: DataFrame with battery data
@@ -807,7 +889,7 @@ class DQDVAnalysis:
             f"DQDVAnalysis.find_inflection_point started with charge_range: {charge_voltage_range}, discharge_range: {discharge_voltage_range}")
 
         # Filter data for the specified cycle
-        cycle_df = df[df["Cycle"] == int(cycle)].copy()
+        cycle_df = df[df[COL_CYCLE] == int(cycle)].copy()
 
         if cycle_df.empty:
             logging.debug(f"No data found for cycle {cycle}")
@@ -817,57 +899,87 @@ class DQDVAnalysis:
 
         # Process charge and discharge separately with their respective voltage ranges
         processing_params = [
-            ('CC_Chg', 'Charge_Capacity(mAh)', charge_voltage_range, 'charge'),
-            ('CC_DChg', 'Discharge_Capacity(mAh)', discharge_voltage_range, 'discharge')
+            (STATUS_CC_CHARGE, COL_CHARGE_CAPACITY, charge_voltage_range, 'charge'),
+            (STATUS_CC_DISCHARGE, COL_DISCHARGE_CAPACITY, discharge_voltage_range, 'discharge')
         ]
 
         for status, capacity_col, voltage_range, key_prefix in processing_params:
-            seg_data = cycle_df[cycle_df['Status'] == status].copy()
+            seg_data = cycle_df[cycle_df[COL_STATUS] == status].copy()
 
             if len(seg_data) < 10:
                 logging.debug(f"Insufficient data for {status} in cycle {cycle}")
                 continue
 
             # Sort data appropriately
-            if status == 'CC_Chg':
-                seg_data = seg_data.sort_values('Voltage', ascending=True)
+            if status == STATUS_CC_CHARGE:
+                seg_data = seg_data.sort_values(COL_VOLTAGE, ascending=True)
             else:
-                seg_data = seg_data.sort_values('Voltage', ascending=False)
+                seg_data = seg_data.sort_values(COL_VOLTAGE, ascending=False)
 
             # Get voltage and capacity arrays
-            volt = seg_data['Voltage'].values
+            volt = seg_data[COL_VOLTAGE].values
             cap = seg_data[capacity_col].values
 
-            # Calculate dV/dQ derivative
-            dV_dQ = np.gradient(volt, cap)
+            # STEP 1: Apply capacity constraint (35-65% of total capacity change)
+            total_capacity_change = cap[-1] - cap[0]
+            capacity_35_percent = cap[0] + 0.35 * total_capacity_change
+            capacity_65_percent = cap[0] + 0.65 * total_capacity_change
 
-            # Apply smoothing with 15-point moving average
-            dV_dQ_smooth = np.convolve(dV_dQ, np.ones(15) / 15, mode='same')
+            # Create capacity mask
+            if status == STATUS_CC_CHARGE:
+                # For charge, capacity increases
+                capacity_mask = (cap >= capacity_35_percent) & (cap <= capacity_65_percent)
+            else:
+                # For discharge, capacity increases but we want the middle region
+                capacity_mask = (cap >= capacity_35_percent) & (cap <= capacity_65_percent)
 
-            # Filter to the specific voltage range for this curve type
-            mask = (volt >= voltage_range[0]) & (volt <= voltage_range[1])
-            valid_indices = np.where(mask)[0]
+            capacity_indices = np.where(capacity_mask)[0]
 
-            if len(valid_indices) == 0:
-                logging.debug(f"No data in voltage range {voltage_range} for {status}")
+            if len(capacity_indices) < 5:
+                logging.debug(f"Insufficient data after capacity constraint for {status}, using fallback voltage 3.2V")
+                result[f'{key_prefix}_inflection_voltage'] = 3.2
                 continue
 
-            # Extract data in the voltage range
+            # Apply capacity constraint to data
+            cap_constrained = cap[capacity_indices]
+            volt_constrained = volt[capacity_indices]
+
+            # Calculate dV/dQ derivative on capacity-constrained data
+            dV_dQ = np.gradient(volt_constrained, cap_constrained)
+
+            # Apply smoothing with 15-point moving average
+            smoothing_window = min(15, len(dV_dQ))
+            if smoothing_window >= 3:
+                dV_dQ_smooth = np.convolve(dV_dQ, np.ones(smoothing_window) / smoothing_window, mode='same')
+            else:
+                dV_dQ_smooth = dV_dQ
+
+            # STEP 2: Apply voltage range filter within capacity-constrained data
+            voltage_mask = (volt_constrained >= voltage_range[0]) & (volt_constrained <= voltage_range[1])
+            valid_indices = np.where(voltage_mask)[0]
+
+            if len(valid_indices) < 5:
+                logging.debug(f"Insufficient data after voltage constraint for {status}, using fallback voltage 3.2V")
+                result[f'{key_prefix}_inflection_voltage'] = 3.2
+                continue
+
+            # Extract data in both capacity and voltage ranges
             sub_dv = dV_dQ_smooth[valid_indices]
-            sub_cap = cap[valid_indices]
-            sub_volt = volt[valid_indices]
+            sub_cap = cap_constrained[valid_indices]
+            sub_volt = volt_constrained[valid_indices]
 
-            # Exclude edges (5% from each end)
-            min_idx = int(len(sub_dv) * 0.05)
-            max_idx = int(len(sub_dv) * 0.95)
+            # Exclude edges (5% from each end) of the final filtered data
+            min_idx = max(0, int(len(sub_dv) * 0.05))
+            max_idx = min(len(sub_dv), int(len(sub_dv) * 0.95))
 
-            if max_idx <= min_idx:
-                logging.debug(f"Insufficient data after edge exclusion for {status}")
+            if max_idx <= min_idx + 2:
+                logging.debug(f"Insufficient data after edge exclusion for {status}, using fallback voltage 3.2V")
+                result[f'{key_prefix}_inflection_voltage'] = 3.2
                 continue
 
             # Find peaks in derivative
             try:
-                if status == 'CC_Chg':
+                if status == STATUS_CC_CHARGE:
                     # For charge, find positive peaks in dV/dQ
                     peaks, _ = find_peaks(sub_dv[min_idx:max_idx])
                 else:
@@ -890,12 +1002,14 @@ class DQDVAnalysis:
                     result[f'{key_prefix}_inflection_capacity'] = float(inflection_capacity)
 
                     logging.debug(
-                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh using range {voltage_range}")
+                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh using capacity constraint (35-65%) + voltage range {voltage_range}")
                 else:
-                    logging.debug(f"No peaks found for {status} in cycle {cycle} within range {voltage_range}")
+                    logging.debug(f"No peaks found for {status} in cycle {cycle}, using fallback voltage 3.2V")
+                    result[f'{key_prefix}_inflection_voltage'] = 3.2
 
             except Exception as e:
-                logging.debug(f"Error in peak detection for {status}: {e}")
+                logging.debug(f"Error in peak detection for {status}: {e}, using fallback voltage 3.2V")
+                result[f'{key_prefix}_inflection_voltage'] = 3.2
                 continue
 
         logging.debug("DQDVAnalysis.find_inflection_point finished")

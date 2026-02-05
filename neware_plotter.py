@@ -1,5 +1,6 @@
-from common.imports import plt, gridspec, os, logging, NewareNDA
+from common.imports import plt, gridspec, os, logging, NewareNDA, Path
 from common.project_imports import CellDatabase, extract_cell_id
+from constants import STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE
 
 
 DEFAULT_CYCLES = [1, 2, 3]  # Default cycles to plot
@@ -151,9 +152,9 @@ class NewarePlotter:
                 legend_name = self.extract_legend_name(file_name)
 
                 # Filter data for the current cycle
-                cycle_data = data[data['Cycle'] == cycle]
-                charge_data = cycle_data[cycle_data['Status'] == 'CC_Chg']
-                discharge_data = cycle_data[cycle_data['Status'] == 'CC_DChg']
+                cycle_data = data[data[COL_CYCLE] == cycle]
+                charge_data = cycle_data[cycle_data[COL_STATUS] == STATUS_CC_CHARGE]
+                discharge_data = cycle_data[cycle_data[COL_STATUS] == STATUS_CC_DISCHARGE]
 
                 if not charge_data.empty:
                     ax.plot(charge_data['Specific_Charge_Capacity(mAh/g)'], charge_data['Voltage'],
@@ -360,7 +361,7 @@ class NewarePlotter:
 
             # Set axis limits if we have data
             if has_data_for_cycle:
-                ax.set_xlim(2.8, 3.6)
+                ax.set_xlim(2.75, 3.6) # I extended the voltage limit for plotting so I could plot full cell dqdv
                 # Ensure we don't have zero division issues
                 if max_charge_dqdv > 0 or min_discharge_dqdv < 0:
                     max_y = max(0.1, max_charge_dqdv * 1.1)  # Always at least 0.1 for non-zero scale
@@ -419,7 +420,8 @@ class NewarePlotter:
         # Get all files data for consistency (we just need the file names for plotting)
         files_data = {}
         for file_path in file_paths:
-            filename_stem = os.path.basename(file_path).split(".")[0]
+            #filename_stem = os.path.basename(file_path).split(".")[0] # This creates a problem if the name has points
+            filename_stem = Path(file_path).stem
             if data_loader.is_loaded(file_path):
                 files_data[filename_stem] = None  # We just need the file names for dQ/dV plotting
             else:
@@ -592,18 +594,22 @@ class NewarePlotter:
             if not data_loader.is_loaded(file_path):
                 continue
 
-            filename_stem = os.path.basename(file_path).split(".")[0]
+            #filename_stem = os.path.basename(file_path).split(".")[0] # This creates a problem if the file has more than one point
+            filename_stem = Path(file_path).stem
             df = data_loader.get_data(file_path)
 
             if df is None:
                 continue
 
-            # Get cell ID and mass
+            # Get cell ID and mass: prefer NDAX metadata, fall back to database
             cell_ID = extract_cell_id(filename_stem)
-            mass = self.db.get_mass(cell_ID)
-
-            if mass is None or mass <= 0:
-                mass = 1.0
+            ndax_mass = df.attrs.get('active_mass')
+            if ndax_mass is not None and ndax_mass > 0:
+                mass = ndax_mass
+            else:
+                mass = self.db.get_mass(cell_ID)
+                if mass is None or mass <= 0:
+                    mass = 1.0
 
             # Create DQDVAnalysis instance
             dqdv_analyzer = DQDVAnalysis("transition_extractor")
@@ -614,20 +620,13 @@ class NewarePlotter:
                     continue
 
                 try:
-                    # Get separate voltage ranges from GUI if available
-                    charge_voltage_range = (2.5, 3.5)  # Default
-                    discharge_voltage_range = (2.5, 3.5)  # Default
+                    # Calculate C-rate for this cycle to resolve voltage ranges dynamically
+                    c_rate = DQDVAnalysis._calculate_crate_for_cycle(df, cycle, mass)
 
-                    if hasattr(self, '_gui_charge_voltage_range'):
-                        charge_voltage_range = self._gui_charge_voltage_range
-                    if hasattr(self, '_gui_discharge_voltage_range'):
-                        discharge_voltage_range = self._gui_discharge_voltage_range
-
-                    # Extract plateau data which includes transition voltages with separate ranges
+                    # Extract plateau data with C-rate dependent voltage ranges
                     plateau_data = dqdv_analyzer.extract_plateaus(
                         df, cycle, mass,
-                        charge_voltage_range=charge_voltage_range,
-                        discharge_voltage_range=discharge_voltage_range
+                        c_rate=c_rate
                     )
 
                     if plateau_data:

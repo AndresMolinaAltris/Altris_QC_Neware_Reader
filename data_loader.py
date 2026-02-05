@@ -1,4 +1,7 @@
-from common.imports import pd, os, logging, Path, NewareNDA, Dict, List, Optional
+from common.imports import pd, os, logging, Path, Dict, List, Optional
+import re
+from NewareNDA.NewareNDAx import read_ndax
+from cell_database import CellDatabase
 
 
 class DataLoader:
@@ -43,7 +46,30 @@ class DataLoader:
 
                 # Load the file
                 logging.debug(f"DATA_LOADER: Loading file: {os.path.basename(file_path)}")
-                df = NewareNDA.read(file_path)
+                df = read_ndax(file_path, software_cycle_number=True)
+
+                # Fallback logic for active mass: use CellDatabase (lazy-loaded singleton)
+                if df.attrs.get('active_mass') is None:
+                    logging.debug(f"DATA_LOADER: Active mass not found in {os.path.basename(file_path)}, attempting database fallback.")
+                    try:
+                        filename_stem = Path(file_path).stem
+                        match = re.match(r'^(\d+)_', filename_stem)
+                        if match:
+                            cell_id = match.group(1)
+                            db = CellDatabase.get_instance()
+                            mass_from_db = db.get_mass(cell_id)
+                            if mass_from_db is not None:
+                                df.attrs['active_mass'] = mass_from_db
+                                logging.debug(f"DATA_LOADER: Fallback successful for {os.path.basename(file_path)}, mass: {mass_from_db:.4f} g")
+                            else:
+                                logging.warning(f"DATA_LOADER: Fallback failed for {os.path.basename(file_path)}: cell_ID {cell_id} not found in database.")
+                        else:
+                            logging.warning(f"DATA_LOADER: Fallback failed for {os.path.basename(file_path)}: could not extract cell_ID from filename.")
+                    except Exception as e:
+                        logging.error(f"DATA_LOADER: Error during active mass fallback for {os.path.basename(file_path)}: {e}")
+                
+                # Cache the data
+                self._cache[file_path] = df
 
                 # Cache the data
                 self._cache[file_path] = df

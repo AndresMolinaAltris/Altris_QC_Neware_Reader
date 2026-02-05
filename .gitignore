@@ -1,0 +1,42 @@
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environments
+venv/
+.env/
+
+# Ignore JetBrains (PyCharm) project files
+.idea/
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+
+# Ignore configuration files
+config.txt
+
+# Other files
+*.xml
+
+# Data files
+Labscale cell specifications.xlsx
+Test_file.ndax
+
+# Improvement documentation (work-in-progress)
+IMPROVEMENTS.md
+
+# Claude Code configuration
+.claude/
+
+# Cache directory
+cache/
+
+# Test data files
+test_ndax_files/

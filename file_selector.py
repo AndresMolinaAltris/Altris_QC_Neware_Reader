@@ -1,9 +1,12 @@
 from common.imports import (
     tk, filedialog, ttk, messagebox, os, pd,
-    logging, FigureCanvasTkAgg, Figure, plt, re
+    logging, FigureCanvasTkAgg, NavigationToolbar2Tk, Figure, plt, re
 )
-#from common.project_imports import DataLoader
 from data_loader import DataLoader # For some reason I cannot import this from common imports
+from constants import (
+    STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE, COL_CURRENT,
+    COL_TIME, COL_CHARGE_CAPACITY, COL_DISCHARGE_CAPACITY
+)
 
 class CycleSelectionDialog(tk.Toplevel):
     """Dialog for selecting which cycles to display in plots and analysis."""
@@ -113,12 +116,6 @@ class FileSelector:
         self.canvas = None
         self.selected_cycles = [1, 2, 3]  # Default cycles to display
 
-        # Add separate voltage range settings for charge and discharge
-        self.charge_voltage_range_min = 3.1  # Default min voltage for charge
-        self.charge_voltage_range_max = 3.3  # Default max voltage for charge
-        self.discharge_voltage_range_min = 3.1  # Default min voltage for discharge
-        self.discharge_voltage_range_max = 3.3  # Default max voltage for discharge
-        self.voltage_panel_expanded = False  # Start collapsed
 
     def _open_cycle_selection(self):
         """Open dialog to select which cycles to display."""
@@ -271,7 +268,8 @@ class FileSelector:
         # Add explanation
         explanation = ttk.Label(
             complete_tab,
-            text="This tab displays all extracted metrics in one consolidated table.\n"
+            text="This tab displays all extracted metrics for ALL cycles in one consolidated table.\n"
+                 "Click 'Generate Complete Analysis' to process all cycles from selected files.\n"
                  "Statistics are calculated separately for each cycle.",
             justify=tk.CENTER
         )
@@ -283,9 +281,12 @@ class FileSelector:
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
 
+        # ADD THE MISSING TABLE CREATION CODE:
         # Define complete metrics columns in grouped order
         self.complete_columns = [
             "Cell ID", "Cycle",
+            # C-Rate columns
+            "Charge C-Rate", "Discharge C-Rate",
             # Capacity Metrics
             "Charge Cap (mAh)", "Discharge Cap (mAh)",
             "Specific Charge Cap (mAh/g)", "Specific Discharge Cap (mAh/g)",
@@ -307,6 +308,7 @@ class FileSelector:
         # Configure column headings and widths
         column_widths = {
             "Cell ID": 80, "Cycle": 60,
+            "Charge C-Rate": 90, "Discharge C-Rate": 90,
             "Charge Cap (mAh)": 100, "Discharge Cap (mAh)": 100,
             "Specific Charge Cap (mAh/g)": 120, "Specific Discharge Cap (mAh/g)": 120,
             "Coulombic Eff (%)": 100,
@@ -333,12 +335,21 @@ class FileSelector:
         y_scrollbar.grid(row=0, column=1, sticky="ns")
         x_scrollbar.grid(row=1, column=0, sticky="ew")
 
-        # Add export button frame
+        # Add export button frame with complete analysis button
         export_frame = ttk.Frame(complete_tab)
         export_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
         export_frame.columnconfigure(0, weight=1)
 
-        # Copy and Export buttons
+        # Generate Complete Analysis button
+        self.generate_complete_btn = ttk.Button(
+            export_frame,
+            text="Generate Complete Analysis",
+            command=self._generate_complete_analysis,
+            state="disabled"  # Initially disabled
+        )
+        self.generate_complete_btn.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+
+        # Copy and Export buttons (moved to right)
         ttk.Button(
             export_frame,
             text="Copy Table",
@@ -352,6 +363,173 @@ class FileSelector:
         ).grid(row=0, column=2, sticky="e", padx=5, pady=5)
 
         return complete_tab
+
+    def _extract_current_data(self, df, cycle):
+        """
+        Extract average current values for charge and discharge phases of a specific cycle.
+
+        Args:
+            df: DataFrame with battery data
+            cycle: Cycle number to extract currents from
+
+        Returns:
+            Tuple of (charge_current, discharge_current) in mA
+        """
+        try:
+            # Get charge current (average during CC_Chg phase)
+            charge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_CHARGE)]
+            charge_current = abs(charge_data[COL_CURRENT].mean()) if not charge_data.empty else None
+
+            # Get discharge current (average during CC_DChg phase)
+            discharge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_DISCHARGE)]
+            discharge_current = abs(discharge_data[COL_CURRENT].mean()) if not discharge_data.empty else None
+
+            return charge_current, discharge_current
+
+        except Exception as e:
+            logging.debug(f"Error extracting current data for cycle {cycle}: {e}")
+            return None, None
+
+    def _calculate_crate_from_time(self, df, cycle, nominal_capacity_mah, phase='charge'):
+        """
+        Calculate C-rate from capacity transferred and time elapsed.
+
+        Parameters:
+        - df: DataFrame with cycle data
+        - cycle: Cycle number
+        - nominal_capacity_mah: Nominal capacity in mAh
+        - phase: 'charge' or 'discharge'
+
+        Returns:
+        - C-rate estimate from time, or None if calculation not possible
+        """
+        try:
+            if phase == 'charge':
+                status = STATUS_CC_CHARGE
+                capacity_col = COL_CHARGE_CAPACITY
+            else:
+                status = STATUS_CC_DISCHARGE
+                capacity_col = COL_DISCHARGE_CAPACITY
+
+            # Filter to CC phase of the target cycle
+            phase_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == status)]
+
+            if phase_data.empty:
+                return None
+
+            # Get capacity transferred (difference between end and start)
+            capacity_start = phase_data[capacity_col].iloc[0]
+            capacity_end = phase_data[capacity_col].iloc[-1]
+            capacity_transferred = abs(capacity_end - capacity_start)
+
+            # Get time elapsed (in hours)
+            time_start = phase_data[COL_TIME].iloc[0]
+            time_end = phase_data[COL_TIME].iloc[-1]
+            time_elapsed_hours = (time_end - time_start) / 3600  # Convert seconds to hours
+
+            if time_elapsed_hours == 0 or capacity_transferred == 0:
+                return None
+
+            # C-rate = Capacity_transferred / (Time_elapsed × Nominal_Capacity)
+            crate_time = capacity_transferred / (time_elapsed_hours * nominal_capacity_mah)
+
+            return crate_time
+
+        except Exception as e:
+            logging.debug(f"Error calculating C-rate from time for cycle {cycle}: {e}")
+            return None
+
+    def _round_to_standard_crate(self, crate_raw, crate_time=None, tolerance=0.15):
+        """
+        Round calculated C-rate to nearest standard value.
+        Optionally cross-check with time-based estimate.
+
+        Parameters:
+        - crate_raw: C-rate calculated from current
+        - crate_time: C-rate calculated from time (optional)
+        - tolerance: Maximum relative difference between methods (default 15%)
+
+        Returns:
+        - Rounded C-rate from standard list, or None if invalid input
+        """
+        STANDARD_CRATES = [0.1, 0.2, 0.33, 0.5, 1, 2, 3, 5, 10]
+
+        if crate_raw is None:
+            return None
+
+        # Cross-check if time-based estimate is available
+        if crate_time is not None:
+            relative_diff = abs(crate_raw - crate_time) / crate_raw if crate_raw != 0 else float('inf')
+            if relative_diff > tolerance:
+                logging.warning(
+                    f"C-rate mismatch: current-based={crate_raw:.3f}, "
+                    f"time-based={crate_time:.3f} (diff={relative_diff*100:.1f}%)"
+                )
+
+        # Find nearest standard C-rate
+        nearest_crate = min(STANDARD_CRATES, key=lambda x: abs(x - crate_raw))
+
+        return nearest_crate
+
+    def _generate_complete_analysis(self):
+        """Generate complete analysis for all cycles in selected files."""
+        if not self.selected_files:
+            messagebox.showwarning(
+                "No Files Selected",
+                "Please select files before generating complete analysis."
+            )
+            return
+
+        # Import the complete analysis function
+        from main import process_all_cycles_for_complete_analysis
+        from common.project_imports import CellDatabase
+        from data_loader import DataLoader
+
+        # Show processing message and disable button
+        old_text = self.generate_complete_btn.cget("text")
+        self.generate_complete_btn.config(text="Processing...", state="disabled")
+        self.root.update()
+
+        try:
+            # Get database instance
+            db = CellDatabase.get_instance()
+
+            # Store raw data for C-rate calculations
+            self._raw_data_loader = DataLoader()
+            self._raw_data_loader.load_files(self.selected_files)
+
+            # Process all cycles
+            logging.debug("FILE_SELECTOR. Starting complete analysis generation")
+            complete_features_df, complete_dqdv_stats = process_all_cycles_for_complete_analysis(
+                self.selected_files, db
+            )
+
+            if not complete_features_df.empty:
+                # Update the complete analysis table
+                self._update_complete_analysis_table(complete_features_df, complete_dqdv_stats)
+
+                # Show success message
+                total_cycles = len(complete_features_df['Cycle'].unique())
+                total_files = len(complete_features_df['cell ID'].unique())
+                messagebox.showinfo(
+                    "Complete Analysis Generated",
+                    f"Successfully processed {total_cycles} cycles from {total_files} files.\n"
+                    f"Total records: {len(complete_features_df)}"
+                )
+                logging.debug(f"FILE_SELECTOR. Complete analysis generated: {len(complete_features_df)} records")
+            else:
+                messagebox.showwarning(
+                    "No Data Generated",
+                    "No data was generated for complete analysis. Check file selection and data quality."
+                )
+
+        except Exception as e:
+            logging.error(f"FILE_SELECTOR. Error generating complete analysis: {e}")
+            messagebox.showerror("Processing Error", f"Error generating complete analysis: {str(e)}")
+
+        finally:
+            # Re-enable button
+            self.generate_complete_btn.config(text=old_text, state="normal")
 
     def _consolidate_all_metrics(self, features_df, dqdv_stats):
         """
@@ -376,6 +554,14 @@ class FileSelector:
                 key = (file_key, cycle_key)
                 dqdv_dict[key] = stat
 
+        # Load cell database for active mass
+        from common.project_imports import CellDatabase
+        from data_import import extract_cell_id
+        from pathlib import Path
+
+        db = CellDatabase.get_instance()
+        SPECIFIC_CAPACITY = 150  # mAh/g - hardcoded for cathode material
+
         consolidated_data = []
 
         # Process each row in features_df
@@ -386,6 +572,60 @@ class FileSelector:
 
             # Get corresponding dqdv data
             dqdv_data = dqdv_dict.get(lookup_key, {})
+
+            # Calculate C-rates using the new robust method
+            charge_crate_str = "N/A"
+            discharge_crate_str = "N/A"
+
+            if hasattr(self, '_raw_data_loader'):
+                # Find the raw data for this cell and cycle
+                for file_path in self._raw_data_loader.get_cached_files():
+                    df = self._raw_data_loader.get_data(file_path)
+                    if df is not None and extract_cell_id(Path(file_path).stem) == cell_id:
+                        # Get active mass from database
+                        try:
+                            active_mass_mg = db.get_mass(cell_id) if db._is_loaded else None
+                            if active_mass_mg is None:
+                                # If database not loaded or mass not found, try to load it
+                                try:
+                                    # Try to get mass, if not found log warning
+                                    active_mass_mg = db.get_mass(cell_id)
+                                except:
+                                    active_mass_mg = None
+
+                            if active_mass_mg:
+                                active_mass_g = active_mass_mg if active_mass_mg < 1 else active_mass_mg / 1000
+                                nominal_capacity_mah = active_mass_g * SPECIFIC_CAPACITY
+
+                                # Get current-based C-rate calculation
+                                cycle_charge_current, cycle_discharge_current = self._extract_current_data(df, cycle)
+
+                                # Calculate charge C-rate
+                                if cycle_charge_current and nominal_capacity_mah:
+                                    charge_crate_raw = cycle_charge_current / nominal_capacity_mah
+                                    charge_crate_time = self._calculate_crate_from_time(
+                                        df, cycle, nominal_capacity_mah, phase='charge'
+                                    )
+                                    charge_crate = self._round_to_standard_crate(charge_crate_raw, charge_crate_time)
+                                    if charge_crate is not None:
+                                        charge_crate_str = f"{charge_crate:.2f}"
+
+                                # Calculate discharge C-rate
+                                if cycle_discharge_current and nominal_capacity_mah:
+                                    discharge_crate_raw = cycle_discharge_current / nominal_capacity_mah
+                                    discharge_crate_time = self._calculate_crate_from_time(
+                                        df, cycle, nominal_capacity_mah, phase='discharge'
+                                    )
+                                    discharge_crate = self._round_to_standard_crate(discharge_crate_raw, discharge_crate_time)
+                                    if discharge_crate is not None:
+                                        discharge_crate_str = f"{discharge_crate:.2f}"
+                            else:
+                                logging.warning(f"No active mass found for cell {cell_id}, C-rate cannot be calculated")
+
+                        except Exception as e:
+                            logging.debug(f"Error calculating C-rate for cell {cell_id}, cycle {cycle}: {e}")
+
+                        break
 
             # Get plateau values for percentage calculations
             charge_1st = dqdv_data.get('Charge 1st Plateau (mAh/g)', 0) if dqdv_data else 0
@@ -405,14 +645,17 @@ class FileSelector:
             consolidated_row = {
                 "Cell ID": cell_id,
                 "Cycle": cycle,
-                # Capacity metrics (1 decimal)
-                "Charge Cap (mAh)": f"{float(row.get('Charge Capacity (mAh)', 0)):.1f}" if pd.notnull(
+                # C-rate data (1 decimal place)
+                "Charge C-Rate": charge_crate_str,
+                "Discharge C-Rate": discharge_crate_str,
+                # Capacity metrics (3 decimals)
+                "Charge Cap (mAh)": f"{float(row.get('Charge Capacity (mAh)', 0)):.3f}" if pd.notnull(
                     row.get('Charge Capacity (mAh)')) else "N/A",
-                "Discharge Cap (mAh)": f"{float(row.get('Discharge Capacity (mAh)', 0)):.1f}" if pd.notnull(
+                "Discharge Cap (mAh)": f"{float(row.get('Discharge Capacity (mAh)', 0)):.3f}" if pd.notnull(
                     row.get('Discharge Capacity (mAh)')) else "N/A",
-                "Specific Charge Cap (mAh/g)": f"{float(row.get('Specific Charge Capacity (mAh/g)', 0)):.1f}" if pd.notnull(
+                "Specific Charge Cap (mAh/g)": f"{float(row.get('Specific Charge Capacity (mAh/g)', 0)):.3f}" if pd.notnull(
                     row.get('Specific Charge Capacity (mAh/g)')) else "N/A",
-                "Specific Discharge Cap (mAh/g)": f"{float(row.get('Specific Discharge Capacity (mAh/g)', 0)):.1f}" if pd.notnull(
+                "Specific Discharge Cap (mAh/g)": f"{float(row.get('Specific Discharge Capacity (mAh/g)', 0)):.3f}" if pd.notnull(
                     row.get('Specific Discharge Capacity (mAh/g)')) else "N/A",
                 "Coulombic Eff (%)": f"{float(row.get('Coulombic Efficiency (%)', 0)):.1f}" if pd.notnull(
                     row.get('Coulombic Efficiency (%)')) else "N/A",
@@ -453,7 +696,7 @@ class FileSelector:
         return consolidated_data
 
     def _update_complete_analysis_table(self, features_df, dqdv_stats):
-        """Update the complete analysis table with all metrics and statistics."""
+        """Update the complete analysis table with all metrics and statistics for all cycles."""
         # Clear existing items
         for item in self.complete_table.get_children():
             self.complete_table.delete(item)
@@ -467,7 +710,7 @@ class FileSelector:
         if not consolidated_data:
             return
 
-        # Group data by cycle for statistics calculation
+        # CHANGED: Get all unique cycles from the data instead of selected cycles
         cycles = sorted(set(row['Cycle'] for row in consolidated_data))
 
         for cycle in cycles:
@@ -656,20 +899,27 @@ class FileSelector:
     def _create_plot_area(self, parent):
         """Create the plotting area within the GUI."""
         # Create a container frame with fixed height for the button
-        button_container = ttk.Frame(parent, height=40)
-        button_container.pack(side=tk.BOTTOM, fill=tk.X)
-        button_container.pack_propagate(False)  # Prevent shrinking
+        self.button_container = ttk.Frame(parent, height=40)
+        self.button_container.pack(side=tk.BOTTOM, fill=tk.X)
+        self.button_container.pack_propagate(False)  # Prevent shrinking
 
         # Add Save Plot button
-        save_plot_button = ttk.Button(button_container, text="Save Plot", command=self._save_current_plot)
+        save_plot_button = ttk.Button(self.button_container, text="Save Plot", command=self._save_current_plot)
         save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
 
         # Create a Figure and add it to a canvas
-        plot_container = ttk.Frame(parent)
-        plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+        self.plot_container = ttk.Frame(parent)
+        self.plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP, before=self.button_container)
 
         self.fig = Figure(figsize=(8, 4))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_container)
+
+        # Add navigation toolbar for zoom/pan capability
+        toolbar_frame = ttk.Frame(self.plot_container)
+        toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        self.toolbar.update()
+
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
@@ -812,39 +1062,41 @@ class FileSelector:
         # Configure the grid for the dQ/dV tab
         dqdv_tab.columnconfigure(0, weight=1)
         dqdv_tab.rowconfigure(0, weight=3)  # Main plot area (larger)
-        dqdv_tab.rowconfigure(1, weight=0)  # Voltage range panel (no expansion)
-        dqdv_tab.rowconfigure(2, weight=1)  # Statistics area (smaller but still expandable)
 
         # Create plot area
         plot_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Plot Preview")
         plot_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
 
         # Create a container frame with fixed height for the save button
-        button_container = ttk.Frame(plot_frame, height=40)
-        button_container.pack(side=tk.BOTTOM, fill=tk.X)
-        button_container.pack_propagate(False)  # Prevent shrinking
+        self.dqdv_button_container = ttk.Frame(plot_frame, height=40)
+        self.dqdv_button_container.pack(side=tk.BOTTOM, fill=tk.X)
+        self.dqdv_button_container.pack_propagate(False)  # Prevent shrinking
 
         # Add Save Plot button
-        save_plot_button = ttk.Button(button_container, text="Save Plot",
+        save_plot_button = ttk.Button(self.dqdv_button_container, text="Save Plot",
                                       command=lambda: self._save_current_plot(plot_type="dqdv"))
         save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
 
         # Create the actual plot area
-        plot_container = ttk.Frame(plot_frame)
-        plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+        self.dqdv_plot_container = ttk.Frame(plot_frame)
+        self.dqdv_plot_container.pack(fill=tk.BOTH, expand=True, side=tk.TOP, before=self.dqdv_button_container)
 
         # Create a Figure and add it to a canvas
         self.dqdv_fig = Figure(figsize=(8, 4))
-        self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
+        self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=self.dqdv_plot_container)
+
+        # Add navigation toolbar for zoom/pan capability
+        toolbar_frame = ttk.Frame(self.dqdv_plot_container)
+        toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+        self.dqdv_toolbar = NavigationToolbar2Tk(self.dqdv_canvas, toolbar_frame)
+        self.dqdv_toolbar.update()
+
         self.dqdv_canvas.draw()
         self.dqdv_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Create voltage range configuration panel
-        self._create_voltage_range_panel(dqdv_tab)
-
         # Create statistics area
         stats_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Statistics")
-        stats_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        stats_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
 
         # Use grid layout for better control in the stats frame
         stats_frame.columnconfigure(0, weight=1)  # For table area
@@ -936,238 +1188,6 @@ class FileSelector:
 
         return dqdv_tab
 
-    def _create_voltage_range_panel(self, parent):
-        """Create a collapsible panel for voltage range configuration with separate charge/discharge controls."""
-        # Main frame for the voltage range panel
-        self.voltage_range_frame = ttk.LabelFrame(parent, text="")
-        self.voltage_range_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=2)
-        self.voltage_range_frame.columnconfigure(1, weight=1)
-
-        # Create toggle button and title frame
-        header_frame = ttk.Frame(self.voltage_range_frame)
-        header_frame.pack(fill=tk.X, padx=5, pady=2)
-
-        # Toggle button (starts with ►)
-        self.voltage_toggle_btn = ttk.Button(
-            header_frame,
-            text="► Voltage Range Settings",
-            command=self._toggle_voltage_panel,
-            width=25
-        )
-        self.voltage_toggle_btn.pack(side=tk.LEFT)
-
-        # Content frame (initially hidden)
-        self.voltage_content_frame = ttk.Frame(self.voltage_range_frame)
-        # Don't pack it initially (collapsed state)
-
-        # Configure content frame grid
-        self.voltage_content_frame.columnconfigure(1, weight=1)
-        self.voltage_content_frame.columnconfigure(3, weight=1)
-
-        # CHARGE voltage range inputs (Row 0)
-        ttk.Label(self.voltage_content_frame, text="Charge Range:", font=('', 9, 'bold')).grid(
-            row=0, column=0, columnspan=4, padx=5, pady=(5, 2), sticky="w"
-        )
-
-        ttk.Label(self.voltage_content_frame, text="Min Voltage (V):").grid(
-            row=1, column=0, padx=5, pady=2, sticky="w"
-        )
-
-        self.charge_min_voltage_var = tk.DoubleVar(value=self.charge_voltage_range_min)
-        self.charge_min_voltage_entry = ttk.Entry(
-            self.voltage_content_frame,
-            textvariable=self.charge_min_voltage_var,
-            width=8
-        )
-        self.charge_min_voltage_entry.grid(row=1, column=1, padx=5, pady=2, sticky="w")
-
-        ttk.Label(self.voltage_content_frame, text="Max Voltage (V):").grid(
-            row=1, column=2, padx=5, pady=2, sticky="w"
-        )
-
-        self.charge_max_voltage_var = tk.DoubleVar(value=self.charge_voltage_range_max)
-        self.charge_max_voltage_entry = ttk.Entry(
-            self.voltage_content_frame,
-            textvariable=self.charge_max_voltage_var,
-            width=8
-        )
-        self.charge_max_voltage_entry.grid(row=1, column=3, padx=5, pady=2, sticky="w")
-
-        # DISCHARGE voltage range inputs (Row 2-3)
-        ttk.Label(self.voltage_content_frame, text="Discharge Range:", font=('', 9, 'bold')).grid(
-            row=2, column=0, columnspan=4, padx=5, pady=(10, 2), sticky="w"
-        )
-
-        ttk.Label(self.voltage_content_frame, text="Min Voltage (V):").grid(
-            row=3, column=0, padx=5, pady=2, sticky="w"
-        )
-
-        self.discharge_min_voltage_var = tk.DoubleVar(value=self.discharge_voltage_range_min)
-        self.discharge_min_voltage_entry = ttk.Entry(
-            self.voltage_content_frame,
-            textvariable=self.discharge_min_voltage_var,
-            width=8
-        )
-        self.discharge_min_voltage_entry.grid(row=3, column=1, padx=5, pady=2, sticky="w")
-
-        ttk.Label(self.voltage_content_frame, text="Max Voltage (V):").grid(
-            row=3, column=2, padx=5, pady=2, sticky="w"
-        )
-
-        self.discharge_max_voltage_var = tk.DoubleVar(value=self.discharge_voltage_range_max)
-        self.discharge_max_voltage_entry = ttk.Entry(
-            self.voltage_content_frame,
-            textvariable=self.discharge_max_voltage_var,
-            width=8
-        )
-        self.discharge_max_voltage_entry.grid(row=3, column=3, padx=5, pady=2, sticky="w")
-
-        # Buttons frame (Row 4)
-        button_frame = ttk.Frame(self.voltage_content_frame)
-        button_frame.grid(row=4, column=0, columnspan=4, pady=10)
-
-        # Apply button (initially disabled)
-        self.voltage_apply_btn = ttk.Button(
-            button_frame,
-            text="Apply",
-            command=self._apply_voltage_range,
-            state="disabled"
-        )
-        self.voltage_apply_btn.pack(side=tk.LEFT, padx=5)
-
-        # Reset button
-        ttk.Button(
-            button_frame,
-            text="Reset to Default",
-            command=self._reset_voltage_range
-        ).pack(side=tk.LEFT, padx=5)
-
-    def _toggle_voltage_panel(self):
-        """Toggle the visibility of the voltage range configuration panel."""
-        if self.voltage_panel_expanded:
-            # Collapse panel
-            self.voltage_content_frame.pack_forget()
-            self.voltage_toggle_btn.config(text="► Voltage Range Settings")
-            self.voltage_panel_expanded = False
-        else:
-            # Expand panel
-            self.voltage_content_frame.pack(fill=tk.X, padx=5, pady=5)
-            self.voltage_toggle_btn.config(text="▼ Voltage Range Settings")
-            self.voltage_panel_expanded = True
-
-    def _validate_voltage_range(self):
-        """Validate both charge and discharge voltage range inputs."""
-        try:
-            # Validate charge range
-            charge_min = self.charge_min_voltage_var.get()
-            charge_max = self.charge_max_voltage_var.get()
-
-            # Validate discharge range
-            discharge_min = self.discharge_min_voltage_var.get()
-            discharge_max = self.discharge_max_voltage_var.get()
-
-            # Check if min < max for both ranges
-            if charge_min >= charge_max:
-                messagebox.showerror(
-                    "Invalid Range",
-                    "Charge minimum voltage must be less than maximum voltage."
-                )
-                return False
-
-            if discharge_min >= discharge_max:
-                messagebox.showerror(
-                    "Invalid Range",
-                    "Discharge minimum voltage must be less than maximum voltage."
-                )
-                return False
-
-            # Check for negative values
-            if any(val < 0 for val in [charge_min, charge_max, discharge_min, discharge_max]):
-                messagebox.showerror(
-                    "Invalid Range",
-                    "Voltage values must be positive."
-                )
-                return False
-
-            # Check for unreasonably high values
-            if any(val > 5.0 for val in [charge_max, discharge_max]):
-                messagebox.showerror(
-                    "Invalid Range",
-                    "Maximum voltage seems unusually high (>5.0V). Please verify."
-                )
-                return False
-
-            return True
-
-        except tk.TclError:
-            messagebox.showerror(
-                "Invalid Input",
-                "Please enter valid numeric values for voltage ranges."
-            )
-            return False
-
-    def _apply_voltage_range(self):
-        """Apply the new voltage ranges and reprocess files."""
-        if not self._validate_voltage_range():
-            return
-
-        # Update stored voltage ranges
-        self.charge_voltage_range_min = self.charge_min_voltage_var.get()
-        self.charge_voltage_range_max = self.charge_max_voltage_var.get()
-        self.discharge_voltage_range_min = self.discharge_min_voltage_var.get()
-        self.discharge_voltage_range_max = self.discharge_max_voltage_var.get()
-
-        # Show processing message
-        old_status = self.status_var.get()
-        self.status_var.set(
-            f"Recalculating with charge range {self.charge_voltage_range_min:.1f}-{self.charge_voltage_range_max:.1f}V, "
-            f"discharge range {self.discharge_voltage_range_min:.1f}-{self.discharge_voltage_range_max:.1f}V..."
-        )
-        self.root.update()
-
-        # Reprocess files if we have selected files and a callback
-        if self.selected_files and hasattr(self, '_last_callback') and self._last_callback:
-            try:
-                # Call the processing function with updated voltage ranges
-                features_df = self._last_callback(self.selected_files)
-
-                # Update tables
-                if features_df is not None and not features_df.empty:
-                    self._update_analysis_table(features_df)
-
-                    # Update complete analysis table if available
-                    if hasattr(self, 'complete_table'):
-                        dqdv_stats_for_complete = getattr(self, '_last_dqdv_stats', [])
-                        self._update_complete_analysis_table(features_df, dqdv_stats_for_complete)
-
-                # Update status
-                cycle_text = ", ".join(str(c) for c in self.selected_cycles)
-                self.status_var.set(
-                    f"Recalculated with separate voltage ranges. Cycles: {cycle_text}"
-                )
-
-            except Exception as e:
-                logging.debug(f"Error during voltage range recalculation: {e}")
-                messagebox.showerror("Processing Error", f"Error during recalculation: {str(e)}")
-                self.status_var.set(old_status)
-        else:
-            self.status_var.set("Voltage ranges updated. Process files to see changes.")
-
-    def _reset_voltage_range(self):
-        """Reset both charge and discharge voltage ranges to default values."""
-        self.charge_min_voltage_var.set(3.1)
-        self.charge_max_voltage_var.set(3.3)
-        self.discharge_min_voltage_var.set(3.1)
-        self.discharge_max_voltage_var.set(3.3)
-
-    def _update_voltage_apply_button(self):
-        """Enable/disable the voltage apply button based on file selection."""
-        if hasattr(self, 'voltage_apply_btn'):
-            if self.selected_files:
-                self.voltage_apply_btn.config(state="normal")
-            else:
-                self.voltage_apply_btn.config(state="disabled")
-
     def _browse_directory(self):
         """Open dialog to select a directory and update the file list."""
         dir_path = filedialog.askdirectory(initialdir=self.current_dir.get())
@@ -1208,9 +1228,9 @@ class FileSelector:
             if full_path not in self.selected_files:
                 self.selected_files.append(full_path)
                 self.selected_listbox.insert(tk.END, file)
-
-        # ADD THIS LINE:
-        self._update_voltage_apply_button()
+        # Enable complete analysis button if files are selected
+        if hasattr(self, 'generate_complete_btn'):
+            self.generate_complete_btn.config(state="normal" if self.selected_files else "disabled")
 
     def _remove_selected_files(self):
         """Remove selected files from the selected list."""
@@ -1222,9 +1242,9 @@ class FileSelector:
             if full_path in self.selected_files:
                 self.selected_files.remove(full_path)
             self.selected_listbox.delete(i)
-
-        # ADD THIS LINE:
-        self._update_voltage_apply_button()
+        # Update complete analysis button state
+        if hasattr(self, 'generate_complete_btn'):
+            self.generate_complete_btn.config(state="normal" if self.selected_files else "disabled")
 
     def _process_files(self, callback):
         """Process the selected files using the provided callback function."""
@@ -1287,10 +1307,11 @@ class FileSelector:
         self.selected_files = []
         self.selected_listbox.delete(0, tk.END)
 
-        # ADD THIS LINE:
-        self._update_voltage_apply_button()
-
         messagebox.showinfo("Selection Cleared", "File selection has been cleared.")
+
+        # Disable complete analysis button
+        if hasattr(self, 'generate_complete_btn'):
+            self.generate_complete_btn.config(state="disabled")
 
     def _update_status_display(self):
         """Update the status label with the current file selection count."""
@@ -1339,33 +1360,39 @@ class FileSelector:
             print("Warning: Plot frame no longer exists")
             return
 
-        # Completely clear the plot frame first - safely
-        for widget in list(self.plot_frame.winfo_children()):
-            try:
-                widget.destroy()
-            except tk.TclError:
-                # Widget might already be destroyed, just continue
-                pass
+        # Clear only the plot container, not the button container
+        if hasattr(self, 'plot_container') and self.plot_container.winfo_exists():
+            for widget in list(self.plot_container.winfo_children()):
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
+        else:
+            # If plot_container doesn't exist yet, clear non-button children
+            for widget in list(self.plot_frame.winfo_children()):
+                if widget != self.button_container:
+                    try:
+                        widget.destroy()
+                    except tk.TclError:
+                        pass
 
         # Store the new figure with a consistent size
         self.fig = fig
 
         try:
-            # Create a fixed-height button container at the bottom
-            button_container = ttk.Frame(self.plot_frame, height=40)
-            button_container.pack(side=tk.BOTTOM, fill=tk.X)
-            button_container.pack_propagate(False)  # Prevent shrinking
-
-            # Add Save Plot button
-            save_plot_button = ttk.Button(button_container, text="Save Plot", command=self._save_current_plot)
-            save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
-
-            # Create plot container for the canvas
-            plot_container = ttk.Frame(self.plot_frame)
-            plot_container.pack(fill=tk.BOTH, expand=True)
+            # Create plot container for the canvas if it doesn't exist
+            if not hasattr(self, 'plot_container') or not self.plot_container.winfo_exists():
+                self.plot_container = ttk.Frame(self.plot_frame)
+                self.plot_container.pack(fill=tk.BOTH, expand=True, before=self.button_container)
 
             # Create a new canvas with the figure
-            self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
+            self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_container)
+
+            # Add navigation toolbar for zoom/pan capability
+            toolbar_frame = ttk.Frame(self.plot_container)
+            toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+            self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+            self.toolbar.update()
 
             # Make sure the figure fits properly in the available space
             self.fig.tight_layout()
@@ -1532,38 +1559,44 @@ class FileSelector:
             for i, ax in enumerate(fig.axes):
                 logging.debug(f"Axis {i} has {len(ax.lines)} lines")
 
-        # Completely clear the plot frame
+        # Clear only the plot container, not the button container
         logging.debug("Clearing existing dQ/dV plot frame widgets")
-        for widget in list(plot_frame.winfo_children()):
-            try:
-                widget.destroy()
-            except tk.TclError:
-                # Widget might already be destroyed, just continue
-                logging.debug("Widget already destroyed during cleanup")
-                pass
+        if hasattr(self, 'dqdv_plot_container') and self.dqdv_plot_container.winfo_exists():
+            for widget in list(self.dqdv_plot_container.winfo_children()):
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    logging.debug("Widget already destroyed during cleanup")
+                    pass
+        else:
+            # If plot_container doesn't exist yet, clear non-button children
+            for widget in list(plot_frame.winfo_children()):
+                if widget != self.dqdv_button_container:
+                    try:
+                        widget.destroy()
+                    except tk.TclError:
+                        logging.debug("Widget already destroyed during cleanup")
+                        pass
 
         # Store the new figure
         logging.debug("Storing the new dQ/dV figure")
         self.dqdv_fig = fig
 
-        # Create a fixed-height button container at the bottom
-        button_container = ttk.Frame(plot_frame, height=40)
-        button_container.pack(side=tk.BOTTOM, fill=tk.X)
-        button_container.pack_propagate(False)  # Prevent shrinking
-
-        # Add Save Plot button
-        save_plot_button = ttk.Button(button_container, text="Save Plot",
-                                      command=lambda: self._save_current_plot(plot_type="dqdv"))
-        save_plot_button.pack(side=tk.RIGHT, padx=5, pady=5)
-
-        # Create plot container for the canvas
-        plot_container = ttk.Frame(plot_frame)
-        plot_container.pack(fill=tk.BOTH, expand=True)
+        # Create plot container for the canvas if it doesn't exist
+        if not hasattr(self, 'dqdv_plot_container') or not self.dqdv_plot_container.winfo_exists():
+            self.dqdv_plot_container = ttk.Frame(plot_frame)
+            self.dqdv_plot_container.pack(fill=tk.BOTH, expand=True, before=self.dqdv_button_container)
 
         # Create a new canvas with the figure
         logging.debug("Creating new FigureCanvasTkAgg for dQ/dV figure")
         try:
-            self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=plot_container)
+            self.dqdv_canvas = FigureCanvasTkAgg(self.dqdv_fig, master=self.dqdv_plot_container)
+
+            # Add navigation toolbar for zoom/pan capability
+            toolbar_frame = ttk.Frame(self.dqdv_plot_container)
+            toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+            self.dqdv_toolbar = NavigationToolbar2Tk(self.dqdv_canvas, toolbar_frame)
+            self.dqdv_toolbar.update()
 
             # Make sure the figure fits properly in the available space
             self.dqdv_fig.tight_layout()
