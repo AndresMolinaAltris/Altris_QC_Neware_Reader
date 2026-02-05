@@ -31,3 +31,12 @@ Test_file.ndax
 
 # Improvement documentation (work-in-progress)
 IMPROVEMENTS.md
+
+# Claude Code configuration
+.claude/
+
+# Cache directory
+cache/
+
+# Test data files
+test_ndax_files/
