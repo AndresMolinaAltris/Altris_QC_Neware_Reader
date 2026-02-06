@@ -582,16 +582,24 @@ class FileSelector:
                 for file_path in self._raw_data_loader.get_cached_files():
                     df = self._raw_data_loader.get_data(file_path)
                     if df is not None and extract_cell_id(Path(file_path).stem) == cell_id:
-                        # Get active mass from database
+                        # Get active mass: prefer NDAX metadata (already in memory), fall back to database
                         try:
-                            active_mass_mg = db.get_mass(cell_id) if db._is_loaded else None
-                            if active_mass_mg is None:
-                                # If database not loaded or mass not found, try to load it
-                                try:
-                                    # Try to get mass, if not found log warning
-                                    active_mass_mg = db.get_mass(cell_id)
-                                except:
-                                    active_mass_mg = None
+                            # First try NDAX metadata
+                            ndax_mass = df.attrs.get('active_mass')
+                            if ndax_mass is not None and ndax_mass > 0:
+                                active_mass_mg = ndax_mass
+                                logging.debug(f"FILE_SELECTOR. Using active mass from NDAX metadata for {cell_id}: {active_mass_mg}g")
+                            else:
+                                # Fall back to database
+                                active_mass_mg = db.get_mass(cell_id) if db._is_loaded else None
+                                if active_mass_mg is None:
+                                    # If database not loaded or mass not found, try to load it
+                                    try:
+                                        active_mass_mg = db.get_mass(cell_id)
+                                        if active_mass_mg is not None:
+                                            logging.debug(f"FILE_SELECTOR. Using active mass from database for {cell_id}: {active_mass_mg}g")
+                                    except:
+                                        active_mass_mg = None
 
                             if active_mass_mg:
                                 active_mass_g = active_mass_mg if active_mass_mg < 1 else active_mass_mg / 1000

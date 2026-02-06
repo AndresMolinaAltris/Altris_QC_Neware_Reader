@@ -466,11 +466,18 @@ class NewarePlotter:
             # Extract cell ID from the filename
             cell_id = extract_cell_id(filename_stem)
 
-            # Get active mass from database
-            mass = self.db.get_mass(cell_id)
-            if mass is None:
-                logging.debug(f"NEWARE_PLOTTER.Warning: No mass found for cell ID {cell_id}, using 1.0g")
-                mass = 1.0
+            # Get active mass: prefer NDAX metadata (already in memory), fall back to database
+            ndax_mass = df.attrs.get('active_mass')
+            if ndax_mass is not None and ndax_mass > 0:
+                mass = ndax_mass
+                logging.debug(f"NEWARE_PLOTTER. Using active mass from NDAX metadata for {cell_id}: {mass}g")
+            else:
+                mass = self.db.get_mass(cell_id)
+                if mass is not None and mass > 0:
+                    logging.debug(f"NEWARE_PLOTTER. Using active mass from database for {cell_id}: {mass}g")
+                else:
+                    logging.debug(f"NEWARE_PLOTTER. No mass found for cell ID {cell_id}, using 1.0g")
+                    mass = 1.0
 
             # Filter relevant columns for plotting
             plot_data = df[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']].copy()
