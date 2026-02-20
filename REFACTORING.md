@@ -221,6 +221,61 @@ self.notebook.add(self.rate_cap_tab, text="Rate Capability")
 
 ---
 
+## Step 8 — GUI Improvements: Tabs, Mass Panel, Rate Capability, DQDV ✅
+
+**Files modified:** `file_selector.py`, `main.py`, `neware_plotter.py`
+
+### 8A — Tab Reorder
+
+Swapped registration order in `show_interface()`: Rate Capability is now Tab 4, Complete Analysis is Tab 5 (last). Removed the stale placeholder `.pack()` label on `analysis_tab` that conflicted with the new grid layout.
+
+### 8B — Complete Analysis Auto-Runs Rate Capability and Populates DQDV Stats
+
+In `_generate_complete_analysis()`, after `_update_complete_analysis_table()` succeeds:
+1. Calls `self._store_dqdv_stats(complete_dqdv_stats)` — populates the Differential Capacity stats table
+2. Calls `self._on_generate_rate_capability()` — auto-populates Rate Capability table
+
+### 8C — Rate Capability: Per-Cycle Rows
+
+Columns changed from `Cell ID | C-Rate | Mean Cap | Std Cap | Rate Retention` to `Cell ID | Cycle | C-Rate | Cap (mAh/g) | Rate Retention (%)`.
+
+`_on_generate_rate_capability()` now iterates per-cycle rows (sorted by `(cell_id, cycle)`) instead of grouping by C-Rate. Per-cycle retention is written directly to `_rate_retention_cache` in the same loop.
+
+### 8D — Rate Capability Enabled After Regular Process Files
+
+Previously Rate Capability required Complete Analysis. Now:
+- `_process_files()` enables `_rc_generate_btn` after updating the complete analysis table
+- `_consolidate_all_metrics()` falls back to `_data_loader` when `_raw_data_loader` is absent (uses `_active_loader` local variable)
+- Note label updated to "Process files or run Complete Analysis first."
+
+### 8E — Specific Capacity Results: Active Mass Panel
+
+`_create_analysis_table()` restructured to use grid layout with two rows:
+- Row 0 (weight=3): existing table + explanation label + export button (moved into `top_frame`)
+- Row 1 (weight=1): `LabelFrame("Active Mass per Cell")` with scrollable canvas
+
+New instance variables: `self._last_features_df`, `self._mass_entries` (dict of `{cell_id: tk.StringVar}`).
+
+New methods:
+- `_update_mass_panel(features_df)`: called from `_update_analysis_table()`; populates one editable entry per cell ID showing mass in mg
+- `_on_apply_mass_changes()`: reads new masses, recalculates `Specific Charge/Discharge Capacity (mAh/g)` columns, calls `_update_analysis_table(updated_df)`
+
+### 8F — DQDV: Fix Advanced Analysis Button and Marker Behaviour
+
+**Root cause of disabled button:** `compute_dqdv()` returns raw dQ/dV curves (a `dict`), but `_on_calculate_dqdv()` was passing it as `plateau_stats` to `update_dqdv_plot()`. That function called `sorted(dqdv_stats, ...)` on the dict, iterating over string keys and calling `.get()` on them → `AttributeError` → exception caught → `calc_tv_btn` never enabled.
+
+**Fixes:**
+- `neware_plotter.py`: added `show_transition_markers=True` parameter to `plot_dqdv_curves_with_loader()`; when `False`, sets `self._transition_voltages = []` and skips extraction
+- `main.py` / `compute_dqdv()`: passes `show_transition_markers=False` — plot generated without markers
+- `_on_calculate_dqdv()`: stores raw curves in `self._last_dqdv_data`; calls `update_dqdv_plot(fig)` without stats; reliably enables `calc_tv_btn`
+- `_on_calculate_transition_voltage()` ("Advanced Analysis"): computes plateau stats, re-renders figure **with** markers using stored `_last_dqdv_data`, calls `update_dqdv_plot(new_fig, plateau_stats)` to show markers and populate stats table together
+
+### 8G — DQDV: Rename Button
+
+`self.calc_tv_btn` label changed from "Calculate Transition Voltage" to "Advanced Analysis".
+
+---
+
 ## Test Suite
 
 Run with: `.venv/Scripts/python.exe -m pytest tests/ -s`
