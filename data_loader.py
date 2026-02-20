@@ -3,7 +3,6 @@ import re
 import time
 import timing_logger
 from timing_logger import log as tlog
-from NewareNDA.NewareNDAx import read_ndax
 from cell_database import CellDatabase
 
 
@@ -52,6 +51,7 @@ class DataLoader:
                 # Load the file
                 logging.debug(f"DATA_LOADER: Loading file: {os.path.basename(file_path)}")
                 with tlog(f"DataLoader.read_ndax('{os.path.basename(file_path)}')"):
+                    from NewareNDA.NewareNDAx import read_ndax
                     df = read_ndax(file_path, software_cycle_number=True)
 
                 # Fallback logic for active mass: use CellDatabase (lazy-loaded singleton)

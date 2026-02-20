@@ -1,5 +1,4 @@
 from common.imports import os, np, pd, logging, Path
-from scipy.signal import savgol_filter, find_peaks
 from data_import import extract_cell_id
 import time
 import timing_logger
@@ -480,6 +479,7 @@ class DQDVAnalysis:
 
         # Apply filter
         try:
+            from scipy.signal import savgol_filter
             smoothed = savgol_filter(data, window_length, polyorder)
             return smoothed
         except Exception:
@@ -1005,6 +1005,7 @@ class DQDVAnalysis:
             try:
                 if status == STATUS_CC_CHARGE:
                     # For charge, find positive peaks in dV/dQ
+                    from scipy.signal import find_peaks
                     peaks, _ = find_peaks(sub_dv[min_idx:max_idx])
                 else:
                     # For discharge, find negative peaks (invert signal)
