@@ -298,7 +298,8 @@ def process_files(ndax_file_list,
     )
 
 def process_all_cycles_for_complete_analysis(ndax_file_list,
-                                             db):
+                                             db,
+                                             data_loader=None):
     """
     Process all cycles from all files for complete analysis.
     Extracts both basic features and dQ/dV data for all available cycles.
@@ -306,14 +307,18 @@ def process_all_cycles_for_complete_analysis(ndax_file_list,
     Args:
         ndax_file_list: List of NDAX files to process
         db: CellDatabase instance
+        data_loader: Optional pre-loaded DataLoader. If provided, files are not
+                     reloaded and the cache is not cleared on return.
 
     Returns:
         Tuple of (features_df, dqdv_stats) for all cycles
     """
     logging.debug("MAIN. process_all_cycles_for_complete_analysis started")
 
-    # Load all files into DataLoader
-    data_loader = _load_files_to_dataloader(ndax_file_list)
+    # Use provided data_loader or load files ourselves
+    owns_loader = data_loader is None
+    if owns_loader:
+        data_loader = _load_files_to_dataloader(ndax_file_list)
 
     # Extract features using shared helper (cycles_to_process=None means all cycles)
     all_features, _, plateau_stats = _extract_features_from_files(
@@ -323,8 +328,9 @@ def process_all_cycles_for_complete_analysis(ndax_file_list,
         extract_plateau_stats=True
     )
 
-    # Clean up DataLoader
-    data_loader.clear_cache()
+    # Only clear cache if we created the loader ourselves
+    if owns_loader:
+        data_loader.clear_cache()
 
     # Combine all results
     if all_features:

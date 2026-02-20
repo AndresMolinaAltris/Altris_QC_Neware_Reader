@@ -494,14 +494,14 @@ class FileSelector:
             # Get database instance
             db = CellDatabase.get_instance()
 
-            # Store raw data for C-rate calculations
+            # Load files once; reuse the same loader for processing and C-rate calculations
             self._raw_data_loader = DataLoader()
             self._raw_data_loader.load_files(self.selected_files)
 
-            # Process all cycles
+            # Process all cycles, passing the already-loaded DataLoader to avoid a second load
             logging.debug("FILE_SELECTOR. Starting complete analysis generation")
             complete_features_df, complete_dqdv_stats = process_all_cycles_for_complete_analysis(
-                self.selected_files, db
+                self.selected_files, db, data_loader=self._raw_data_loader
             )
 
             if not complete_features_df.empty:
