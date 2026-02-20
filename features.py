@@ -85,15 +85,13 @@ class Features:
             if cycle == 1:
                 idx = (df[COL_CYCLE] == 1) & (df[COL_STEP] == 1) & (df[COL_STATUS] == STATUS_REST)
             else:
-                rest_steps, prev_status = [], None
-                for _, row in cycle_data.iterrows():
-                    if row[COL_STATUS] == STATUS_REST and prev_status in DISCHARGE_STATUSES:
-                        rest_steps.append(row[COL_STEP])
-                    prev_status = row[COL_STATUS]
-                if not rest_steps:
+                prev = cycle_data[COL_STATUS].shift(1)
+                rest_mask = (cycle_data[COL_STATUS] == STATUS_REST) & (prev.isin(DISCHARGE_STATUSES))
+                rest_steps_series = cycle_data.loc[rest_mask, COL_STEP]
+                if rest_steps_series.empty:
                     features[label] = np.nan;
                     return
-                target_step = rest_steps[-1]
+                target_step = rest_steps_series.iloc[-1]
                 idx = (df[COL_CYCLE] == cycle) & (df[COL_STEP] == target_step) & (df[COL_STATUS] == STATUS_REST)
 
             if not idx.any():
@@ -126,16 +124,14 @@ class Features:
                 return
             cycle_data = cycle_data.sort_index()
 
-            rest_steps, prev_status = [], None
-            for _, row in cycle_data.iterrows():
-                if row[COL_STATUS] == STATUS_REST and prev_status in CHARGE_STATUSES:
-                    rest_steps.append(row[COL_STEP])
-                prev_status = row[COL_STATUS]
-            if not rest_steps:
+            prev = cycle_data[COL_STATUS].shift(1)
+            rest_mask = (cycle_data[COL_STATUS] == STATUS_REST) & (prev.isin(CHARGE_STATUSES))
+            rest_steps_series = cycle_data.loc[rest_mask, COL_STEP]
+            if rest_steps_series.empty:
                 features[label] = np.nan;
                 return
 
-            target_step = rest_steps[-1]
+            target_step = rest_steps_series.iloc[-1]
             idx = (df[COL_CYCLE] == cycle) & (df[COL_STEP] == target_step) & (df[COL_STATUS] == STATUS_REST)
             if not idx.any():
                 features[label] = np.nan;
@@ -749,6 +745,30 @@ class DQDVAnalysis:
             logging.debug(f"DQDVAnalysis: Error calculating C-rate for cycle {cycle}: {e}")
             return None
 
+    @staticmethod
+    def _extract_cycle_currents(df, cycle):
+        """
+        Extract mean CC charge and discharge currents for a specific cycle.
+
+        Args:
+            df: DataFrame with battery data
+            cycle: Cycle number
+
+        Returns:
+            Tuple of (charge_current_mA, discharge_current_mA) — either may be None
+        """
+        try:
+            charge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_CHARGE)]
+            charge_current = abs(charge_data[COL_CURRENT].mean()) if not charge_data.empty else None
+
+            discharge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_DISCHARGE)]
+            discharge_current = abs(discharge_data[COL_CURRENT].mean()) if not discharge_data.empty else None
+
+            return charge_current, discharge_current
+        except Exception as e:
+            logging.debug(f"DQDVAnalysis._extract_cycle_currents error for cycle {cycle}: {e}")
+            return None, None
+
     def extract_plateaus_batch(self,
                                data_loader,
                                db,
@@ -848,54 +868,6 @@ class DQDVAnalysis:
         logging.debug(f"[TIMING] DQDVAnalysis.extract_plateaus_batch n_files={n_files} n_cycles={n_cycles} | duration={_batch_dur:.3f}s | elapsed={_batch_elp:.3f}s")
         logging.debug("DQDVAnalysis.extract_plateaus_batch finished")
         return stats
-
-    def find_transition_voltage(self, df,
-                                cycle,
-                                voltage_range=(2.5, 3.5)):
-        """
-        Find transition voltage where dQ/dV is flattest (closest to zero).
-
-        Args:
-            df: DataFrame with battery data
-            cycle: Cycle number to analyze
-            voltage_range: Tuple with min and max voltage for analysis range
-
-        Returns:
-            Dictionary with charge and discharge transition voltages
-        """
-
-        # Get already processed dQ/dV data
-        dqdv_data = self.extract_dqdv(df, cycle)
-        if not dqdv_data:
-            return None
-
-        result = {}
-
-        # Process charge data
-        if 'charge' in dqdv_data and dqdv_data['charge']:
-            charge_data = dqdv_data['charge']
-            # Filter to voltage range
-            mask = (charge_data['voltage'] >= voltage_range[0]) & (charge_data['voltage'] <= voltage_range[1])
-            if np.any(mask):
-                filtered_voltage = charge_data['voltage'][mask]
-                filtered_dqdv = charge_data['smoothed_dqdv'][mask]
-                # Find where absolute value of dQ/dV is minimum (flattest point)
-                flattest_idx = np.argmin(np.abs(filtered_dqdv))
-                result['charge_transition_voltage'] = float(filtered_voltage[flattest_idx])
-
-        # Process discharge data
-        if 'discharge' in dqdv_data and dqdv_data['discharge']:
-            discharge_data = dqdv_data['discharge']
-            # Filter to voltage range
-            mask = (discharge_data['voltage'] >= voltage_range[0]) & (discharge_data['voltage'] <= voltage_range[1])
-            if np.any(mask):
-                filtered_voltage = discharge_data['voltage'][mask]
-                filtered_dqdv = discharge_data['smoothed_dqdv'][mask]
-                # Find where absolute value of dQ/dV is minimum (flattest point)
-                flattest_idx = np.argmin(np.abs(filtered_dqdv))
-                result['discharge_transition_voltage'] = float(filtered_voltage[flattest_idx])
-
-        return result
 
     def find_inflection_point(self,
                               df,

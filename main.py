@@ -27,6 +27,7 @@ class ProcessingResult:
     dqdv_fig: Optional[Any] = None      # matplotlib Figure
     dqdv_data: Optional[Dict] = None    # Raw dQ/dV curves for plotting
     plateau_stats: Optional[List] = None  # Plateau statistics
+    data_loader: Optional[Any] = None   # DataLoader kept alive for on-demand dQ/dV
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -62,10 +63,6 @@ def _extract_features_from_files(data_loader, ndax_file_list, db, cycles_to_proc
     all_features = []
     dqdv_data = {} if extract_dqdv_curves else None
     plateau_stats = [] if extract_plateau_stats else None
-
-    # Pre-load scipy so cycle 1 doesn't pay the deferred-import penalty
-    with tlog("warmup_scipy"):
-        warmup_scipy()
 
     for file in ndax_file_list:
         # Skip files that failed to load
@@ -218,12 +215,12 @@ def process_files(ndax_file_list,
     with tlog(f"process_files._load_files n={len(ndax_file_list)}"):
         data_loader = _load_files_to_dataloader(ndax_file_list)
 
-    # Extract features using shared helper
+    # Extract features using shared helper (dQ/dV is on-demand only)
     with tlog(f"process_files._extract_features n_files={len(ndax_file_list)} n_cycles={len(selected_cycles)}"):
-        all_features, dqdv_data, _ = _extract_features_from_files(
+        all_features, _, _ = _extract_features_from_files(
             data_loader, ndax_file_list, db,
             cycles_to_process=selected_cycles,
-            extract_dqdv_curves=True,
+            extract_dqdv_curves=False,
             extract_plateau_stats=False
         )
 
@@ -238,68 +235,33 @@ def process_files(ndax_file_list,
 
     # Initialize result with features
     capacity_fig = None
-    dqdv_fig = None
-    plateau_stats = None
 
-    # Generate plots if enabled
+    # Generate capacity plot if enabled
     if enable_plotting and ndax_file_list:
         try:
             logging.debug("MAIN.Generating capacity plots...")
             plotter = NewarePlotter(db)
 
-            # Generate capacity plot
             with tlog(f"NewarePlotter.plot_ndax_files n={len(ndax_file_list)}"):
                 capacity_fig = plotter.plot_ndax_files_with_loader(
                     data_loader,
                     ndax_file_list,
                     display_plot=False,
-                    gui_callback=None,  # No longer pass GUI callback
-                    selected_cycles=selected_cycles
-                )
-
-            # Generate dQ/dV plots
-            logging.debug("MAIN.Generating dQ/dV plots...")
-            with tlog(f"NewarePlotter.plot_dqdv_curves n={len(ndax_file_list)}"):
-                dqdv_fig = plotter.plot_dqdv_curves_with_loader(
-                    data_loader,
-                    ndax_file_list,
-                    dqdv_data=dqdv_data,
-                    display_plot=False,
                     gui_callback=None,
                     selected_cycles=selected_cycles
                 )
 
-            # Extract plateau statistics
-            if dqdv_fig:
-                logging.debug("MAIN.Extracting plateau statistics...")
-
-                # C-rate is now calculated per cycle inside extract_plateaus_batch
-                dqdv_analyzer = DQDVAnalysis("plateau_extractor")
-                with tlog(f"extract_plateaus_batch n_files={len(ndax_file_list)} n_cycles={len(selected_cycles)}"):
-                    plateau_stats = dqdv_analyzer.extract_plateaus_batch(
-                        data_loader,
-                        db,
-                        ndax_file_list,
-                        selected_cycles
-                    )
-                logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
-
-            logging.debug("MAIN.Plotting complete.")
+            logging.debug("MAIN.Capacity plot complete.")
 
         except Exception as e:
             logging.debug(f"MAIN.Error during plotting: {e}")
 
-    # Clean up DataLoader when done
-    data_loader.clear_cache()
-    logging.debug("MAIN.DataLoader cache cleared")
-
+    # NOTE: data_loader is NOT cleared here — caller keeps it for on-demand dQ/dV
     logging.debug("MAIN.Features extracted, process_files finished")
     return ProcessingResult(
         features_df=final_features_df,
         capacity_fig=capacity_fig,
-        dqdv_fig=dqdv_fig,
-        dqdv_data=dqdv_data,
-        plateau_stats=plateau_stats
+        data_loader=data_loader,
     )
 
 def process_all_cycles_for_complete_analysis(ndax_file_list,
@@ -345,6 +307,72 @@ def process_all_cycles_for_complete_analysis(ndax_file_list,
     else:
         logging.debug("MAIN. No features extracted for complete analysis")
         return pd.DataFrame(), []
+
+def compute_dqdv(ndax_file_list, db, selected_cycles, data_loader):
+    """
+    Compute dQ/dV curves on demand and return the figure and raw data.
+
+    Args:
+        ndax_file_list: List of NDAX file paths
+        db: CellDatabase instance
+        selected_cycles: List of cycle numbers to plot
+        data_loader: Pre-loaded DataLoader (from process_files result)
+
+    Returns:
+        Tuple of (dqdv_fig, dqdv_data) — figure may be None on failure
+    """
+    logging.debug("MAIN.compute_dqdv started")
+    with tlog("warmup_scipy"):
+        warmup_scipy()
+
+    _, dqdv_data, _ = _extract_features_from_files(
+        data_loader, ndax_file_list, db,
+        cycles_to_process=selected_cycles,
+        extract_dqdv_curves=True,
+        extract_plateau_stats=False
+    )
+
+    dqdv_fig = None
+    try:
+        plotter = NewarePlotter(db)
+        with tlog(f"NewarePlotter.plot_dqdv_curves n={len(ndax_file_list)}"):
+            dqdv_fig = plotter.plot_dqdv_curves_with_loader(
+                data_loader,
+                ndax_file_list,
+                dqdv_data=dqdv_data,
+                display_plot=False,
+                gui_callback=None,
+                selected_cycles=selected_cycles
+            )
+    except Exception as e:
+        logging.debug(f"MAIN.compute_dqdv plotting error: {e}")
+
+    logging.debug("MAIN.compute_dqdv finished")
+    return dqdv_fig, dqdv_data
+
+
+def compute_transition_voltages(ndax_file_list, db, selected_cycles, data_loader):
+    """
+    Compute plateau/transition voltage statistics on demand.
+
+    Args:
+        ndax_file_list: List of NDAX file paths
+        db: CellDatabase instance
+        selected_cycles: List of cycle numbers to analyse
+        data_loader: Pre-loaded DataLoader
+
+    Returns:
+        List of plateau statistics dicts
+    """
+    logging.debug("MAIN.compute_transition_voltages started")
+    dqdv_analyzer = DQDVAnalysis("plateau_extractor")
+    with tlog(f"extract_plateaus_batch n_files={len(ndax_file_list)} n_cycles={len(selected_cycles)}"):
+        plateau_stats = dqdv_analyzer.extract_plateaus_batch(
+            data_loader, db, ndax_file_list, selected_cycles
+        )
+    logging.debug(f"MAIN.compute_transition_voltages finished: {len(plateau_stats)} entries")
+    return plateau_stats
+
 
 def main():
     """
@@ -441,11 +469,11 @@ def main():
             with tlog("GUI._update_analysis_table"):
                 file_selector_instance._update_analysis_table(result.features_df)
 
-            # Update dQ/dV plot and stats
-            if result.dqdv_fig and result.plateau_stats:
-                with tlog("GUI.update_dqdv_plot"):
-                    file_selector_instance.update_dqdv_plot(result.dqdv_fig, result.plateau_stats)
-                file_selector_instance._store_dqdv_stats(result.plateau_stats)
+            # Store data_loader for on-demand dQ/dV and enable the button
+            if result.data_loader is not None:
+                file_selector_instance._data_loader = result.data_loader
+                if hasattr(file_selector_instance, 'calc_dqdv_btn'):
+                    file_selector_instance.calc_dqdv_btn.config(state="normal")
 
         except Exception as e:
             logging.debug(f"MAIN.Error updating GUI: {e}")

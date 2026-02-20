@@ -77,9 +77,6 @@ class DataLoader:
                 # Cache the data
                 self._cache[file_path] = df
 
-                # Cache the data
-                self._cache[file_path] = df
-
                 # Store filename stem for easier lookup
                 filename_stem = Path(file_path).stem
                 self._file_stems[file_path] = filename_stem
@@ -100,12 +97,13 @@ class DataLoader:
             logging.warning(f"DATA_LOADER: Failed to load {len(self._failed_files)} files: "
                             f"{[os.path.basename(f) for f in self._failed_files]}")
 
-    def get_data(self, file_path: str) -> Optional[pd.DataFrame]:
+    def get_data(self, file_path: str, copy: bool = False) -> Optional[pd.DataFrame]:
         """
         Get cached data for a specific file.
 
         Args:
             file_path: Full path to the NDAX file
+            copy: If True, return a copy of the DataFrame (default: False)
 
         Returns:
             DataFrame containing the file data, or None if not loaded/failed
@@ -114,7 +112,7 @@ class DataLoader:
             logging.warning(f"DATA_LOADER: File not in cache: {os.path.basename(file_path)}")
             return None
 
-        return self._cache[file_path].copy()  # Return copy to prevent accidental modification
+        return self._cache[file_path].copy() if copy else self._cache[file_path]
 
     def get_data_by_stem(self, filename_stem: str) -> Optional[pd.DataFrame]:
         """

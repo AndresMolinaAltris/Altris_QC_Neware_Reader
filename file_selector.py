@@ -4,9 +4,9 @@ from common.imports import (
 )
 from data_loader import DataLoader # For some reason I cannot import this from common imports
 from constants import (
-    STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE, COL_CURRENT,
-    COL_TIME, COL_CHARGE_CAPACITY, COL_DISCHARGE_CAPACITY
+    STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE, COL_CURRENT
 )
+from features import DQDVAnalysis
 
 class CycleSelectionDialog(tk.Toplevel):
     """Dialog for selecting which cycles to display in plots and analysis."""
@@ -158,6 +158,9 @@ class FileSelector:
         self.current_dir = tk.StringVar(value=self.initial_dir)
         self.status_var = tk.StringVar(value="No files selected")
         self._last_callback = None  # Store the callback for later reprocessing
+        self._rate_retention_cache: dict = {}  # keyed (cell_id, cycle) -> {"chg": float|None, "dchg": float|None}
+        self._complete_analysis_data: list = []  # last consolidated_data from _consolidate_all_metrics
+        self._data_loader = None  # DataLoader kept alive after Process Files
 
         # Configure grid layout
         self.root.columnconfigure(0, weight=1)
@@ -201,6 +204,10 @@ class FileSelector:
         # Create the complete analysis tab
         self.complete_tab = self._create_complete_analysis_tab()
         self.notebook.add(self.complete_tab, text="Complete Analysis")
+
+        # Create the rate capability tab
+        self.rate_cap_tab = self._create_rate_capability_tab()
+        self.notebook.add(self.rate_cap_tab, text="Rate Capability")
 
         # Move existing components into the first tab
         # Create file lists frame in the plot tab
@@ -287,6 +294,8 @@ class FileSelector:
             "Cell ID", "Cycle",
             # C-Rate columns
             "Charge C-Rate", "Discharge C-Rate",
+            # Current columns
+            "Charge Current (mA)", "Discharge Current (mA)",
             # Capacity Metrics
             "Charge Cap (mAh)", "Discharge Cap (mAh)",
             "Specific Charge Cap (mAh/g)", "Specific Discharge Cap (mAh/g)",
@@ -299,7 +308,9 @@ class FileSelector:
             "Chg Total (mAh/g)", "Chg Transition (V)",
             "Dchg 1st Plateau (mAh/g)", "Dchg 1st %",
             "Dchg 2nd Plateau (mAh/g)", "Dchg 2nd %",
-            "Dchg Total (mAh/g)", "Dchg Transition (V)"
+            "Dchg Total (mAh/g)", "Dchg Transition (V)",
+            # Rate retention (populated by Rate Capability tab)
+            "Chg Rate Retention (%)", "Dchg Rate Retention (%)"
         ]
 
         # Create the table
@@ -309,6 +320,7 @@ class FileSelector:
         column_widths = {
             "Cell ID": 80, "Cycle": 60,
             "Charge C-Rate": 90, "Discharge C-Rate": 90,
+            "Charge Current (mA)": 120, "Discharge Current (mA)": 120,
             "Charge Cap (mAh)": 100, "Discharge Cap (mAh)": 100,
             "Specific Charge Cap (mAh/g)": 120, "Specific Discharge Cap (mAh/g)": 120,
             "Coulombic Eff (%)": 100,
@@ -318,7 +330,8 @@ class FileSelector:
             "Chg Total (mAh/g)": 100, "Chg Transition (V)": 100,
             "Dchg 1st Plateau (mAh/g)": 120, "Dchg 1st %": 80,
             "Dchg 2nd Plateau (mAh/g)": 120, "Dchg 2nd %": 80,
-            "Dchg Total (mAh/g)": 100, "Dchg Transition (V)": 100
+            "Dchg Total (mAh/g)": 100, "Dchg Transition (V)": 100,
+            "Chg Rate Retention (%)": 130, "Dchg Rate Retention (%)": 130
         }
 
         for col in self.complete_columns:
@@ -364,113 +377,6 @@ class FileSelector:
 
         return complete_tab
 
-    def _extract_current_data(self, df, cycle):
-        """
-        Extract average current values for charge and discharge phases of a specific cycle.
-
-        Args:
-            df: DataFrame with battery data
-            cycle: Cycle number to extract currents from
-
-        Returns:
-            Tuple of (charge_current, discharge_current) in mA
-        """
-        try:
-            # Get charge current (average during CC_Chg phase)
-            charge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_CHARGE)]
-            charge_current = abs(charge_data[COL_CURRENT].mean()) if not charge_data.empty else None
-
-            # Get discharge current (average during CC_DChg phase)
-            discharge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_DISCHARGE)]
-            discharge_current = abs(discharge_data[COL_CURRENT].mean()) if not discharge_data.empty else None
-
-            return charge_current, discharge_current
-
-        except Exception as e:
-            logging.debug(f"Error extracting current data for cycle {cycle}: {e}")
-            return None, None
-
-    def _calculate_crate_from_time(self, df, cycle, nominal_capacity_mah, phase='charge'):
-        """
-        Calculate C-rate from capacity transferred and time elapsed.
-
-        Parameters:
-        - df: DataFrame with cycle data
-        - cycle: Cycle number
-        - nominal_capacity_mah: Nominal capacity in mAh
-        - phase: 'charge' or 'discharge'
-
-        Returns:
-        - C-rate estimate from time, or None if calculation not possible
-        """
-        try:
-            if phase == 'charge':
-                status = STATUS_CC_CHARGE
-                capacity_col = COL_CHARGE_CAPACITY
-            else:
-                status = STATUS_CC_DISCHARGE
-                capacity_col = COL_DISCHARGE_CAPACITY
-
-            # Filter to CC phase of the target cycle
-            phase_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == status)]
-
-            if phase_data.empty:
-                return None
-
-            # Get capacity transferred (difference between end and start)
-            capacity_start = phase_data[capacity_col].iloc[0]
-            capacity_end = phase_data[capacity_col].iloc[-1]
-            capacity_transferred = abs(capacity_end - capacity_start)
-
-            # Get time elapsed (in hours)
-            time_start = phase_data[COL_TIME].iloc[0]
-            time_end = phase_data[COL_TIME].iloc[-1]
-            time_elapsed_hours = (time_end - time_start) / 3600  # Convert seconds to hours
-
-            if time_elapsed_hours == 0 or capacity_transferred == 0:
-                return None
-
-            # C-rate = Capacity_transferred / (Time_elapsed × Nominal_Capacity)
-            crate_time = capacity_transferred / (time_elapsed_hours * nominal_capacity_mah)
-
-            return crate_time
-
-        except Exception as e:
-            logging.debug(f"Error calculating C-rate from time for cycle {cycle}: {e}")
-            return None
-
-    def _round_to_standard_crate(self, crate_raw, crate_time=None, tolerance=0.15):
-        """
-        Round calculated C-rate to nearest standard value.
-        Optionally cross-check with time-based estimate.
-
-        Parameters:
-        - crate_raw: C-rate calculated from current
-        - crate_time: C-rate calculated from time (optional)
-        - tolerance: Maximum relative difference between methods (default 15%)
-
-        Returns:
-        - Rounded C-rate from standard list, or None if invalid input
-        """
-        STANDARD_CRATES = [0.1, 0.2, 0.33, 0.5, 1, 2, 3, 5, 10]
-
-        if crate_raw is None:
-            return None
-
-        # Cross-check if time-based estimate is available
-        if crate_time is not None:
-            relative_diff = abs(crate_raw - crate_time) / crate_raw if crate_raw != 0 else float('inf')
-            if relative_diff > tolerance:
-                logging.warning(
-                    f"C-rate mismatch: current-based={crate_raw:.3f}, "
-                    f"time-based={crate_time:.3f} (diff={relative_diff*100:.1f}%)"
-                )
-
-        # Find nearest standard C-rate
-        nearest_crate = min(STANDARD_CRATES, key=lambda x: abs(x - crate_raw))
-
-        return nearest_crate
-
     def _generate_complete_analysis(self):
         """Generate complete analysis for all cycles in selected files."""
         if not self.selected_files:
@@ -505,8 +411,16 @@ class FileSelector:
             )
 
             if not complete_features_df.empty:
+                # Reset rate retention cache for fresh analysis
+                self._rate_retention_cache = {}
+                self._complete_analysis_data = []
+
                 # Update the complete analysis table
                 self._update_complete_analysis_table(complete_features_df, complete_dqdv_stats)
+
+                # Enable Rate Capability tab button
+                if hasattr(self, '_rc_generate_btn'):
+                    self._rc_generate_btn.config(state="normal")
 
                 # Show success message
                 total_cycles = len(complete_features_df['Cycle'].unique())
@@ -564,6 +478,33 @@ class FileSelector:
 
         consolidated_data = []
 
+        # Pre-build cell_id -> (df, nominal_capacity_mah) lookup once per file,
+        # so the inner row loop never calls get_data() or extract_cell_id() per cycle.
+        cell_df_map = {}
+        if hasattr(self, '_raw_data_loader'):
+            for file_path in self._raw_data_loader.get_cached_files():
+                cid = extract_cell_id(Path(file_path).stem)
+                df = self._raw_data_loader.get_data(file_path)
+                if df is None:
+                    continue
+                # Resolve active mass: prefer NDAX metadata, fall back to database
+                ndax_mass = df.attrs.get('active_mass')
+                if ndax_mass is not None and ndax_mass > 0:
+                    active_mass_mg = ndax_mass
+                    logging.debug(f"FILE_SELECTOR. Using active mass from NDAX metadata for {cid}: {active_mass_mg}g")
+                else:
+                    try:
+                        active_mass_mg = db.get_mass(cid)
+                        if active_mass_mg is not None:
+                            logging.debug(f"FILE_SELECTOR. Using active mass from database for {cid}: {active_mass_mg}g")
+                    except Exception:
+                        active_mass_mg = None
+                if active_mass_mg:
+                    active_mass_g = active_mass_mg if active_mass_mg < 1 else active_mass_mg / 1000
+                    cell_df_map[cid] = (df, active_mass_g * SPECIFIC_CAPACITY)
+                else:
+                    logging.warning(f"No active mass found for cell {cid}, C-rate cannot be calculated")
+
         # Process each row in features_df
         for _, row in features_df.iterrows():
             cell_id = row.get('cell ID', '')
@@ -573,67 +514,29 @@ class FileSelector:
             # Get corresponding dqdv data
             dqdv_data = dqdv_dict.get(lookup_key, {})
 
-            # Calculate C-rates using the new robust method
+            # Calculate C-rates using DQDVAnalysis helper
             charge_crate_str = "N/A"
             discharge_crate_str = "N/A"
 
-            if hasattr(self, '_raw_data_loader'):
-                # Find the raw data for this cell and cycle
-                for file_path in self._raw_data_loader.get_cached_files():
-                    df = self._raw_data_loader.get_data(file_path)
-                    if df is not None and extract_cell_id(Path(file_path).stem) == cell_id:
-                        # Get active mass: prefer NDAX metadata (already in memory), fall back to database
-                        try:
-                            # First try NDAX metadata
-                            ndax_mass = df.attrs.get('active_mass')
-                            if ndax_mass is not None and ndax_mass > 0:
-                                active_mass_mg = ndax_mass
-                                logging.debug(f"FILE_SELECTOR. Using active mass from NDAX metadata for {cell_id}: {active_mass_mg}g")
-                            else:
-                                # Fall back to database
-                                active_mass_mg = db.get_mass(cell_id) if db._is_loaded else None
-                                if active_mass_mg is None:
-                                    # If database not loaded or mass not found, try to load it
-                                    try:
-                                        active_mass_mg = db.get_mass(cell_id)
-                                        if active_mass_mg is not None:
-                                            logging.debug(f"FILE_SELECTOR. Using active mass from database for {cell_id}: {active_mass_mg}g")
-                                    except:
-                                        active_mass_mg = None
-
-                            if active_mass_mg:
-                                active_mass_g = active_mass_mg if active_mass_mg < 1 else active_mass_mg / 1000
-                                nominal_capacity_mah = active_mass_g * SPECIFIC_CAPACITY
-
-                                # Get current-based C-rate calculation
-                                cycle_charge_current, cycle_discharge_current = self._extract_current_data(df, cycle)
-
-                                # Calculate charge C-rate
-                                if cycle_charge_current and nominal_capacity_mah:
-                                    charge_crate_raw = cycle_charge_current / nominal_capacity_mah
-                                    charge_crate_time = self._calculate_crate_from_time(
-                                        df, cycle, nominal_capacity_mah, phase='charge'
-                                    )
-                                    charge_crate = self._round_to_standard_crate(charge_crate_raw, charge_crate_time)
-                                    if charge_crate is not None:
-                                        charge_crate_str = f"{charge_crate:.2f}"
-
-                                # Calculate discharge C-rate
-                                if cycle_discharge_current and nominal_capacity_mah:
-                                    discharge_crate_raw = cycle_discharge_current / nominal_capacity_mah
-                                    discharge_crate_time = self._calculate_crate_from_time(
-                                        df, cycle, nominal_capacity_mah, phase='discharge'
-                                    )
-                                    discharge_crate = self._round_to_standard_crate(discharge_crate_raw, discharge_crate_time)
-                                    if discharge_crate is not None:
-                                        discharge_crate_str = f"{discharge_crate:.2f}"
-                            else:
-                                logging.warning(f"No active mass found for cell {cell_id}, C-rate cannot be calculated")
-
-                        except Exception as e:
-                            logging.debug(f"Error calculating C-rate for cell {cell_id}, cycle {cycle}: {e}")
-
-                        break
+            if cell_id in cell_df_map:
+                df, nominal_capacity_mah = cell_df_map[cell_id]
+                try:
+                    active_mass_g = nominal_capacity_mah / 150  # reverse of mass * SPECIFIC_CAPACITY
+                    charge_crate = DQDVAnalysis._calculate_crate_for_cycle(df, cycle, active_mass_g)
+                    if charge_crate is not None:
+                        charge_crate_str = f"{charge_crate:.2f}"
+                    # Use discharge current for discharge C-rate
+                    _, dchg_current = DQDVAnalysis._extract_cycle_currents(df, cycle)
+                    if dchg_current is not None and nominal_capacity_mah:
+                        dchg_crate_raw = dchg_current / nominal_capacity_mah
+                        standard_rates = [0.1, 0.2, 0.33, 0.5, 1, 2, 3, 5, 10]
+                        nearest = min(standard_rates, key=lambda x: abs(x - dchg_crate_raw))
+                        if abs(dchg_crate_raw - nearest) / nearest <= 0.15:
+                            discharge_crate_str = f"{nearest:.2f}"
+                        else:
+                            discharge_crate_str = f"{dchg_crate_raw:.2f}"
+                except Exception as e:
+                    logging.debug(f"Error calculating C-rate for cell {cell_id}, cycle {cycle}: {e}")
 
             # Get plateau values for percentage calculations
             charge_1st = dqdv_data.get('Charge 1st Plateau (mAh/g)', 0) if dqdv_data else 0
@@ -649,6 +552,20 @@ class FileSelector:
             discharge_1st_pct = (discharge_1st / discharge_total * 100) if discharge_total != 0 else 0
             discharge_2nd_pct = (discharge_2nd / discharge_total * 100) if discharge_total != 0 else 0
 
+            # Extract raw currents for the current columns
+            chg_current_str = "N/A"
+            dchg_current_str = "N/A"
+            if cell_id in cell_df_map:
+                df, _ = cell_df_map[cell_id]
+                try:
+                    chg_I, dchg_I = DQDVAnalysis._extract_cycle_currents(df, cycle)
+                    if chg_I is not None:
+                        chg_current_str = f"{float(chg_I):.3f}"
+                    if dchg_I is not None:
+                        dchg_current_str = f"{float(dchg_I):.3f}"
+                except Exception as e:
+                    logging.debug(f"Error extracting currents for cell {cell_id}, cycle {cycle}: {e}")
+
             # Format values with appropriate decimal places
             consolidated_row = {
                 "Cell ID": cell_id,
@@ -656,6 +573,9 @@ class FileSelector:
                 # C-rate data (1 decimal place)
                 "Charge C-Rate": charge_crate_str,
                 "Discharge C-Rate": discharge_crate_str,
+                # Current data (3 decimal places)
+                "Charge Current (mA)": chg_current_str,
+                "Discharge Current (mA)": dchg_current_str,
                 # Capacity metrics (3 decimals)
                 "Charge Cap (mAh)": f"{float(row.get('Charge Capacity (mAh)', 0)):.3f}" if pd.notnull(
                     row.get('Charge Capacity (mAh)')) else "N/A",
@@ -696,12 +616,38 @@ class FileSelector:
                 "Dchg Total (mAh/g)": f"{discharge_total:.1f}" if dqdv_data.get(
                     'Discharge Total (mAh/g)') is not None else "N/A",
                 "Dchg Transition (V)": f"{float(dqdv_data.get('Discharge Transition Voltage (V)', 0)):.3f}" if dqdv_data.get(
-                    'Discharge Transition Voltage (V)') is not None else "N/A"
+                    'Discharge Transition Voltage (V)') is not None else "N/A",
+                # Rate retention — populated lazily by Rate Capability tab
+                "Chg Rate Retention (%)": "N/A",
+                "Dchg Rate Retention (%)": "N/A",
             }
 
             consolidated_data.append(consolidated_row)
 
         return consolidated_data
+
+    def _update_rate_retention_in_table(self):
+        """Rewrite only the rate retention columns in the Complete Analysis treeview from cache."""
+        chg_idx = self.complete_columns.index("Chg Rate Retention (%)")
+        dchg_idx = self.complete_columns.index("Dchg Rate Retention (%)")
+        chg_col = self.complete_columns[chg_idx]
+        dchg_col = self.complete_columns[dchg_idx]
+
+        for item in self.complete_table.get_children():
+            values = self.complete_table.item(item, "values")
+            if not values:
+                continue
+            cell_id = values[0]
+            cycle_raw = values[1]
+            try:
+                cycle = int(cycle_raw)
+            except (ValueError, TypeError):
+                continue
+            cached = self._rate_retention_cache.get((cell_id, cycle))
+            chg_ret = f"{cached['chg']:.1f}" if cached and cached.get('chg') is not None else "N/A"
+            dchg_ret = f"{cached['dchg']:.1f}" if cached and cached.get('dchg') is not None else "N/A"
+            self.complete_table.set(item, chg_col, chg_ret)
+            self.complete_table.set(item, dchg_col, dchg_ret)
 
     def _update_complete_analysis_table(self, features_df, dqdv_stats):
         """Update the complete analysis table with all metrics and statistics for all cycles."""
@@ -717,6 +663,9 @@ class FileSelector:
 
         if not consolidated_data:
             return
+
+        # Store for Rate Capability tab
+        self._complete_analysis_data = consolidated_data
 
         # CHANGED: Get all unique cycles from the data instead of selected cycles
         cycles = sorted(set(row['Cycle'] for row in consolidated_data))
@@ -1069,11 +1018,28 @@ class FileSelector:
 
         # Configure the grid for the dQ/dV tab
         dqdv_tab.columnconfigure(0, weight=1)
-        dqdv_tab.rowconfigure(0, weight=3)  # Main plot area (larger)
+        dqdv_tab.rowconfigure(0, weight=0)  # Button row
+        dqdv_tab.rowconfigure(1, weight=3)  # Main plot area (larger)
+
+        # On-demand calculation button frame
+        btn_frame = ttk.Frame(dqdv_tab)
+        btn_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(5, 0))
+
+        self.calc_dqdv_btn = ttk.Button(
+            btn_frame, text="Calculate dQ/dV",
+            state="disabled", command=self._on_calculate_dqdv
+        )
+        self.calc_dqdv_btn.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.calc_tv_btn = ttk.Button(
+            btn_frame, text="Calculate Transition Voltage",
+            state="disabled", command=self._on_calculate_transition_voltage
+        )
+        self.calc_tv_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
         # Create plot area
         plot_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Plot Preview")
-        plot_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
+        plot_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
 
         # Create a container frame with fixed height for the save button
         self.dqdv_button_container = ttk.Frame(plot_frame, height=40)
@@ -1104,7 +1070,8 @@ class FileSelector:
 
         # Create statistics area
         stats_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Statistics")
-        stats_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        stats_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        dqdv_tab.rowconfigure(2, weight=1)  # Stats area
 
         # Use grid layout for better control in the stats frame
         stats_frame.columnconfigure(0, weight=1)  # For table area
@@ -1195,6 +1162,148 @@ class FileSelector:
         ).grid(row=0, column=2, sticky="e", padx=5, pady=5)
 
         return dqdv_tab
+
+    def _create_rate_capability_tab(self):
+        """Create Tab 5 — Rate Capability analysis."""
+        rate_tab = ttk.Frame(self.notebook)
+        rate_tab.columnconfigure(0, weight=1)
+        rate_tab.rowconfigure(0, weight=0)  # Controls
+        rate_tab.rowconfigure(1, weight=1)  # Results treeview
+
+        # --- Controls frame ---
+        ctrl_frame = ttk.LabelFrame(rate_tab, text="Rate Capability Settings")
+        ctrl_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
+
+        # Direction radio buttons
+        ttk.Label(ctrl_frame, text="Direction:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self._rc_direction = tk.StringVar(value="Discharge")
+        ttk.Radiobutton(ctrl_frame, text="Charge", variable=self._rc_direction,
+                        value="Charge").grid(row=0, column=1, padx=5, pady=5)
+        ttk.Radiobutton(ctrl_frame, text="Discharge", variable=self._rc_direction,
+                        value="Discharge").grid(row=0, column=2, padx=5, pady=5)
+
+        # Normalize to cycle spinbox
+        ttk.Label(ctrl_frame, text="Normalize to cycle:").grid(row=0, column=3, padx=(15, 5), pady=5, sticky="w")
+        self._rc_norm_cycle = ttk.Spinbox(ctrl_frame, from_=1, to=9999, width=6)
+        self._rc_norm_cycle.set(1)
+        self._rc_norm_cycle.grid(row=0, column=4, padx=5, pady=5)
+
+        # Generate button
+        self._rc_generate_btn = ttk.Button(
+            ctrl_frame, text="Generate Rate Capability",
+            command=self._on_generate_rate_capability, state="disabled"
+        )
+        self._rc_generate_btn.grid(row=0, column=5, padx=15, pady=5)
+
+        # Note label
+        ttk.Label(ctrl_frame, text="Requires Complete Analysis to be generated first.",
+                  foreground="gray").grid(row=1, column=0, columnspan=6, padx=5, pady=(0, 5), sticky="w")
+
+        # --- Results treeview ---
+        results_frame = ttk.LabelFrame(rate_tab, text="Rate Capability Results")
+        results_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        results_frame.columnconfigure(0, weight=1)
+        results_frame.rowconfigure(0, weight=1)
+
+        rc_columns = ["Cell ID", "C-Rate", "Mean Cap (mAh/g)", "Std Cap (mAh/g)", "Rate Retention (%)"]
+        self._rc_results_tree = ttk.Treeview(results_frame, columns=rc_columns, show="headings")
+        for col in rc_columns:
+            self._rc_results_tree.heading(col, text=col)
+            self._rc_results_tree.column(col, width=130, anchor="center")
+
+        rc_yscroll = ttk.Scrollbar(results_frame, orient="vertical", command=self._rc_results_tree.yview)
+        rc_xscroll = ttk.Scrollbar(results_frame, orient="horizontal", command=self._rc_results_tree.xview)
+        self._rc_results_tree.configure(yscrollcommand=rc_yscroll.set, xscrollcommand=rc_xscroll.set)
+        self._rc_results_tree.grid(row=0, column=0, sticky="nsew")
+        rc_yscroll.grid(row=0, column=1, sticky="ns")
+        rc_xscroll.grid(row=1, column=0, sticky="ew")
+
+        return rate_tab
+
+    def _on_generate_rate_capability(self):
+        """Generate Rate Capability analysis from the stored Complete Analysis data."""
+
+        if not self._complete_analysis_data:
+            messagebox.showerror(
+                "No Data",
+                "Complete Analysis must be generated first before running Rate Capability."
+            )
+            return
+
+        direction = self._rc_direction.get()
+        cap_col = ("Specific Charge Cap (mAh/g)" if direction == "Charge"
+                   else "Specific Discharge Cap (mAh/g)")
+        retention_key = "chg" if direction == "Charge" else "dchg"
+
+        try:
+            norm_cycle = int(self._rc_norm_cycle.get())
+        except (ValueError, TypeError):
+            messagebox.showerror("Invalid Input", "Normalize-to cycle must be an integer.")
+            return
+
+        # Build a DataFrame from consolidated data for easy grouping
+        rows = []
+        for r in self._complete_analysis_data:
+            rows.append({
+                "cell_id": r["Cell ID"],
+                "cycle": r["Cycle"],
+                "c_rate": r["Charge C-Rate"] if direction == "Charge" else r["Discharge C-Rate"],
+                "capacity": r.get(cap_col, "N/A"),
+            })
+        df_rc = pd.DataFrame(rows)
+
+        # Convert capacity to numeric, coercing N/A to NaN
+        df_rc["capacity"] = pd.to_numeric(df_rc["capacity"], errors="coerce")
+
+        # Build reference capacities per cell at norm_cycle
+        ref_caps = {}
+        for cell_id, group in df_rc.groupby("cell_id"):
+            norm_rows = group[group["cycle"] == norm_cycle]
+            if norm_rows.empty:
+                logging.warning(f"Rate Capability: cycle {norm_cycle} not found for cell {cell_id}, skipping")
+                continue
+            ref_caps[cell_id] = norm_rows["capacity"].mean()
+
+        # Group by (cell_id, c_rate) and aggregate
+        results = []
+        for (cell_id, c_rate), group in df_rc.groupby(["cell_id", "c_rate"]):
+            if cell_id not in ref_caps:
+                continue
+            cap_ref = ref_caps[cell_id]
+            mean_cap = group["capacity"].mean()
+            std_cap = group["capacity"].std()
+            retention = (mean_cap / cap_ref * 100) if (cap_ref and not pd.isna(cap_ref) and cap_ref != 0) else None
+            results.append({
+                "cell_id": cell_id, "c_rate": c_rate,
+                "mean_cap": mean_cap, "std_cap": std_cap,
+                "retention": retention,
+            })
+
+            # Also update per-cycle cache
+            for _, row in group.iterrows():
+                cycle = row["cycle"]
+                cap = row["capacity"]
+                per_cycle_ret = (cap / cap_ref * 100) if (cap_ref and not pd.isna(cap_ref)
+                                                           and not pd.isna(cap) and cap_ref != 0) else None
+                key = (cell_id, cycle)
+                if key not in self._rate_retention_cache:
+                    self._rate_retention_cache[key] = {"chg": None, "dchg": None}
+                self._rate_retention_cache[key][retention_key] = per_cycle_ret
+
+        # Populate treeview
+        for item in self._rc_results_tree.get_children():
+            self._rc_results_tree.delete(item)
+        for r in sorted(results, key=lambda x: (x["cell_id"], str(x["c_rate"]))):
+            self._rc_results_tree.insert("", "end", values=(
+                r["cell_id"],
+                r["c_rate"],
+                f"{r['mean_cap']:.1f}" if not pd.isna(r['mean_cap']) else "N/A",
+                f"{r['std_cap']:.1f}" if not pd.isna(r['std_cap']) else "N/A",
+                f"{r['retention']:.1f}" if r['retention'] is not None else "N/A",
+            ))
+
+        # Update Complete Analysis table retention columns
+        self._update_rate_retention_in_table()
 
     def _browse_directory(self):
         """Open dialog to select a directory and update the file list."""
@@ -1321,6 +1430,13 @@ class FileSelector:
         if hasattr(self, 'generate_complete_btn'):
             self.generate_complete_btn.config(state="disabled")
 
+        # Clear stored data_loader and disable on-demand dQ/dV buttons
+        self._data_loader = None
+        if hasattr(self, 'calc_dqdv_btn'):
+            self.calc_dqdv_btn.config(state="disabled")
+        if hasattr(self, 'calc_tv_btn'):
+            self.calc_tv_btn.config(state="disabled")
+
     def _update_status_display(self):
         """Update the status label with the current file selection count."""
         file_count = len(self.selected_files)
@@ -1417,24 +1533,54 @@ class FileSelector:
         except Exception as e:
             print(f"Error updating plot: {e}")
 
-    def display_matplotlib_figure(self, fig):
-        """Display a matplotlib figure in the plot preview area."""
-        # Clear any existing plot
-        for widget in self.plot_frame.winfo_children():
-            widget.destroy()
+    def _on_calculate_dqdv(self):
+        """Calculate dQ/dV on demand and update the plot and stats."""
+        from main import compute_dqdv
+        from common.project_imports import CellDatabase
 
-        # Create a new canvas with the figure
-        canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        if not hasattr(self, '_data_loader') or self._data_loader is None:
+            from tkinter import messagebox
+            messagebox.showwarning("No Data", "Process files first before calculating dQ/dV.")
+            return
 
-        # Add a frame for the Save Plot button without toolbar
-        button_frame = ttk.Frame(self.plot_frame)
-        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        self.calc_dqdv_btn.config(state="disabled")
+        self.root.update()
+        try:
+            db = CellDatabase.get_instance()
+            dqdv_fig, plateau_stats = compute_dqdv(
+                self.selected_files, db, self.selected_cycles, self._data_loader
+            )
+            if dqdv_fig:
+                self.update_dqdv_plot(dqdv_fig, plateau_stats)
+                self._store_dqdv_stats(plateau_stats)
+                self.calc_tv_btn.config(state="normal")
+        except Exception as e:
+            logging.debug(f"FILE_SELECTOR._on_calculate_dqdv error: {e}")
+        finally:
+            self.calc_dqdv_btn.config(state="normal")
 
-        # Add Save Plot button
-        save_plot_button = ttk.Button(button_frame, text="Save Plot", command=self._save_current_plot)
-        save_plot_button.pack(side=tk.RIGHT, padx=5)
+    def _on_calculate_transition_voltage(self):
+        """Calculate transition voltages on demand and update the stats treeview."""
+        from main import compute_transition_voltages
+        from common.project_imports import CellDatabase
+
+        if not hasattr(self, '_data_loader') or self._data_loader is None:
+            from tkinter import messagebox
+            messagebox.showwarning("No Data", "Process files first before calculating transition voltages.")
+            return
+
+        self.calc_tv_btn.config(state="disabled")
+        self.root.update()
+        try:
+            db = CellDatabase.get_instance()
+            plateau_stats = compute_transition_voltages(
+                self.selected_files, db, self.selected_cycles, self._data_loader
+            )
+            self._store_dqdv_stats(plateau_stats)
+        except Exception as e:
+            logging.debug(f"FILE_SELECTOR._on_calculate_transition_voltage error: {e}")
+        finally:
+            self.calc_tv_btn.config(state="normal")
 
     def _update_analysis_table(self, features_df=None):
         """
