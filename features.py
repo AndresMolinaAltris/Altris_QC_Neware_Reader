@@ -10,6 +10,12 @@ from constants import (
     COL_CHARGE_CAPACITY, COL_DISCHARGE_CAPACITY
 )
 
+
+def warmup_scipy():
+    """Pre-load scipy to avoid first-cycle overhead from deferred imports."""
+    from scipy.signal import savgol_filter, find_peaks  # noqa: F401
+
+
 class Features:
     """
     A class to extract various electrochemical features from a given Neware dataset.

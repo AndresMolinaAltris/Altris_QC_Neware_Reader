@@ -10,6 +10,7 @@ from common.project_imports import (
     CellDatabase, NewarePlotter, FileSelector,
     configure_logging, DataLoader
 )
+from features import warmup_scipy
 from constants import COL_CYCLE
 
 
@@ -61,6 +62,10 @@ def _extract_features_from_files(data_loader, ndax_file_list, db, cycles_to_proc
     all_features = []
     dqdv_data = {} if extract_dqdv_curves else None
     plateau_stats = [] if extract_plateau_stats else None
+
+    # Pre-load scipy so cycle 1 doesn't pay the deferred-import penalty
+    with tlog("warmup_scipy"):
+        warmup_scipy()
 
     for file in ndax_file_list:
         # Skip files that failed to load
