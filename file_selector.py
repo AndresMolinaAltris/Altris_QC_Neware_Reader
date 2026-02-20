@@ -161,6 +161,8 @@ class FileSelector:
         self._rate_retention_cache: dict = {}  # keyed (cell_id, cycle) -> {"chg": float|None, "dchg": float|None}
         self._complete_analysis_data: list = []  # last consolidated_data from _consolidate_all_metrics
         self._data_loader = None  # DataLoader kept alive after Process Files
+        self._last_features_df = None  # Last features DataFrame for mass editing
+        self._mass_entries: dict = {}  # {cell_id: tk.StringVar} for mass panel
 
         # Configure grid layout
         self.root.columnconfigure(0, weight=1)
@@ -194,20 +196,17 @@ class FileSelector:
         self.analysis_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.analysis_tab, text="Specific capacity results")
 
-        # Adding a label to the second tab
-        ttk.Label(self.analysis_tab, text="Analysis will appear here after processing files.").pack(padx=20, pady=20)
-
         # Create the differential capacity tab
         self.dqdv_tab = self._create_dqdv_tab()
         self.notebook.add(self.dqdv_tab, text="Differential Capacity")
 
-        # Create the complete analysis tab
-        self.complete_tab = self._create_complete_analysis_tab()
-        self.notebook.add(self.complete_tab, text="Complete Analysis")
-
         # Create the rate capability tab
         self.rate_cap_tab = self._create_rate_capability_tab()
         self.notebook.add(self.rate_cap_tab, text="Rate Capability")
+
+        # Create the complete analysis tab
+        self.complete_tab = self._create_complete_analysis_tab()
+        self.notebook.add(self.complete_tab, text="Complete Analysis")
 
         # Move existing components into the first tab
         # Create file lists frame in the plot tab
@@ -418,9 +417,13 @@ class FileSelector:
                 # Update the complete analysis table
                 self._update_complete_analysis_table(complete_features_df, complete_dqdv_stats)
 
-                # Enable Rate Capability tab button
+                # Populate DQDV stats table with plateau data from complete analysis
+                self._store_dqdv_stats(complete_dqdv_stats)
+
+                # Enable Rate Capability tab button and auto-run rate capability
                 if hasattr(self, '_rc_generate_btn'):
                     self._rc_generate_btn.config(state="normal")
+                self._on_generate_rate_capability()
 
                 # Show success message
                 total_cycles = len(complete_features_df['Cycle'].unique())
@@ -481,10 +484,11 @@ class FileSelector:
         # Pre-build cell_id -> (df, nominal_capacity_mah) lookup once per file,
         # so the inner row loop never calls get_data() or extract_cell_id() per cycle.
         cell_df_map = {}
-        if hasattr(self, '_raw_data_loader'):
-            for file_path in self._raw_data_loader.get_cached_files():
+        _active_loader = getattr(self, '_raw_data_loader', None) or getattr(self, '_data_loader', None)
+        if _active_loader is not None:
+            for file_path in _active_loader.get_cached_files():
                 cid = extract_cell_id(Path(file_path).stem)
-                df = self._raw_data_loader.get_data(file_path)
+                df = _active_loader.get_data(file_path)
                 if df is None:
                     continue
                 # Resolve active mass: prefer NDAX metadata, fall back to database
@@ -908,9 +912,27 @@ class FileSelector:
 
     def _create_analysis_table(self):
         """Create a table in the analysis tab to display specific capacity results."""
+        # Configure analysis_tab to use grid layout with two rows
+        self.analysis_tab.columnconfigure(0, weight=1)
+        self.analysis_tab.rowconfigure(0, weight=3)  # Table area
+        self.analysis_tab.rowconfigure(1, weight=1)  # Mass panel area
+
+        # --- Top section: table area ---
+        top_frame = ttk.Frame(self.analysis_tab)
+        top_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 5))
+
+        # Add a label explaining the purpose of this tab
+        explanation = ttk.Label(
+            top_frame,
+            text="This tab displays capacity data and statistics for the selected cycles.\n"
+                 "Process files in the 'Charge vs Voltage Plot' tab to see results.",
+            justify=tk.CENTER
+        )
+        explanation.pack(pady=(5, 0))
+
         # Create a frame to hold the table
-        table_frame = ttk.Frame(self.analysis_tab)
-        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        table_frame = ttk.Frame(top_frame)
+        table_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
         # Configure the table frame grid
         table_frame.columnconfigure(0, weight=1)
@@ -932,24 +954,50 @@ class FileSelector:
         # Create the actual table - we'll populate it with _update_table_columns()
         self._update_table_columns()
 
-        # Add a label explaining the purpose of this tab
-        explanation = ttk.Label(
-            self.analysis_tab,
-            text="This tab displays capacity data and statistics for the selected cycles.\n"
-                 "Process files in the 'Charge vs Voltage Plot' tab to see results.",
-            justify=tk.CENTER
-        )
-        explanation.pack(pady=10, before=table_frame)
-
         # Add export button
-        export_frame = ttk.Frame(self.analysis_tab)
-        export_frame.pack(fill=tk.X, padx=10, pady=5)
+        export_frame = ttk.Frame(top_frame)
+        export_frame.pack(fill=tk.X, pady=5)
 
         ttk.Button(
             export_frame,
             text="Export Table",
             command=self._export_analysis_table
         ).pack(side=tk.RIGHT)
+
+        # --- Bottom section: mass panel ---
+        self._mass_entries = {}
+        mass_panel = ttk.LabelFrame(self.analysis_tab, text="Active Mass per Cell")
+        mass_panel.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        mass_panel.columnconfigure(0, weight=1)
+        mass_panel.rowconfigure(0, weight=1)
+        mass_panel.rowconfigure(1, weight=0)
+
+        # Scrollable inner frame for cell mass entries
+        mass_canvas = tk.Canvas(mass_panel, height=80)
+        mass_scroll = ttk.Scrollbar(mass_panel, orient="vertical", command=mass_canvas.yview)
+        self._mass_inner_frame = ttk.Frame(mass_canvas)
+        self._mass_inner_frame.bind(
+            "<Configure>",
+            lambda e: mass_canvas.configure(scrollregion=mass_canvas.bbox("all"))
+        )
+        mass_canvas.create_window((0, 0), window=self._mass_inner_frame, anchor="nw")
+        mass_canvas.configure(yscrollcommand=mass_scroll.set)
+        mass_canvas.grid(row=0, column=0, sticky="nsew")
+        mass_scroll.grid(row=0, column=1, sticky="ns")
+
+        # Bottom row: note + apply button
+        bottom_frame = ttk.Frame(mass_panel)
+        bottom_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        ttk.Label(
+            bottom_frame,
+            text="Mass changes recalculate specific capacity without reloading files.",
+            foreground="gray"
+        ).pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            bottom_frame,
+            text="Apply Mass Changes",
+            command=self._on_apply_mass_changes
+        ).pack(side=tk.RIGHT, padx=5)
 
     def _update_table_columns(self):
         """Update the table columns based on the current selected cycles"""
@@ -1032,7 +1080,7 @@ class FileSelector:
         self.calc_dqdv_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.calc_tv_btn = ttk.Button(
-            btn_frame, text="Calculate Transition Voltage",
+            btn_frame, text="Advanced Analysis",
             state="disabled", command=self._on_calculate_transition_voltage
         )
         self.calc_tv_btn.pack(side=tk.LEFT, padx=5, pady=5)
@@ -1196,7 +1244,7 @@ class FileSelector:
         self._rc_generate_btn.grid(row=0, column=5, padx=15, pady=5)
 
         # Note label
-        ttk.Label(ctrl_frame, text="Requires Complete Analysis to be generated first.",
+        ttk.Label(ctrl_frame, text="Process files or run Complete Analysis first.",
                   foreground="gray").grid(row=1, column=0, columnspan=6, padx=5, pady=(0, 5), sticky="w")
 
         # --- Results treeview ---
@@ -1205,7 +1253,7 @@ class FileSelector:
         results_frame.columnconfigure(0, weight=1)
         results_frame.rowconfigure(0, weight=1)
 
-        rc_columns = ["Cell ID", "C-Rate", "Mean Cap (mAh/g)", "Std Cap (mAh/g)", "Rate Retention (%)"]
+        rc_columns = ["Cell ID", "Cycle", "C-Rate", "Cap (mAh/g)", "Rate Retention (%)"]
         self._rc_results_tree = ttk.Treeview(results_frame, columns=rc_columns, show="headings")
         for col in rc_columns:
             self._rc_results_tree.heading(col, text=col)
@@ -1264,41 +1312,38 @@ class FileSelector:
                 continue
             ref_caps[cell_id] = norm_rows["capacity"].mean()
 
-        # Group by (cell_id, c_rate) and aggregate
+        # Build per-cycle results
         results = []
-        for (cell_id, c_rate), group in df_rc.groupby(["cell_id", "c_rate"]):
+        for _, row in df_rc.iterrows():
+            cell_id = row["cell_id"]
+            cycle = row["cycle"]
+            c_rate = row["c_rate"]
+            cap = row["capacity"]
             if cell_id not in ref_caps:
                 continue
             cap_ref = ref_caps[cell_id]
-            mean_cap = group["capacity"].mean()
-            std_cap = group["capacity"].std()
-            retention = (mean_cap / cap_ref * 100) if (cap_ref and not pd.isna(cap_ref) and cap_ref != 0) else None
+            retention = (cap / cap_ref * 100) if (cap_ref and not pd.isna(cap_ref)
+                                                    and not pd.isna(cap) and cap_ref != 0) else None
             results.append({
-                "cell_id": cell_id, "c_rate": c_rate,
-                "mean_cap": mean_cap, "std_cap": std_cap,
-                "retention": retention,
+                "cell_id": cell_id, "cycle": cycle, "c_rate": c_rate,
+                "capacity": cap, "retention": retention,
             })
 
-            # Also update per-cycle cache
-            for _, row in group.iterrows():
-                cycle = row["cycle"]
-                cap = row["capacity"]
-                per_cycle_ret = (cap / cap_ref * 100) if (cap_ref and not pd.isna(cap_ref)
-                                                           and not pd.isna(cap) and cap_ref != 0) else None
-                key = (cell_id, cycle)
-                if key not in self._rate_retention_cache:
-                    self._rate_retention_cache[key] = {"chg": None, "dchg": None}
-                self._rate_retention_cache[key][retention_key] = per_cycle_ret
+            # Update per-cycle retention cache
+            key = (cell_id, cycle)
+            if key not in self._rate_retention_cache:
+                self._rate_retention_cache[key] = {"chg": None, "dchg": None}
+            self._rate_retention_cache[key][retention_key] = retention
 
         # Populate treeview
         for item in self._rc_results_tree.get_children():
             self._rc_results_tree.delete(item)
-        for r in sorted(results, key=lambda x: (x["cell_id"], str(x["c_rate"]))):
+        for r in sorted(results, key=lambda x: (x["cell_id"], x["cycle"])):
             self._rc_results_tree.insert("", "end", values=(
                 r["cell_id"],
+                r["cycle"],
                 r["c_rate"],
-                f"{r['mean_cap']:.1f}" if not pd.isna(r['mean_cap']) else "N/A",
-                f"{r['std_cap']:.1f}" if not pd.isna(r['std_cap']) else "N/A",
+                f"{r['capacity']:.1f}" if not pd.isna(r['capacity']) else "N/A",
                 f"{r['retention']:.1f}" if r['retention'] is not None else "N/A",
             ))
 
@@ -1399,6 +1444,10 @@ class FileSelector:
                     # Get dqdv_stats from the stored data if available
                     dqdv_stats_for_complete = getattr(self, '_last_dqdv_stats', [])
                     self._update_complete_analysis_table(features_df, dqdv_stats_for_complete)
+
+                # Enable Rate Capability button now that _complete_analysis_data is populated
+                if hasattr(self, '_rc_generate_btn'):
+                    self._rc_generate_btn.config(state="normal")
 
             # Update status to show completion
             cycle_text = ", ".join(str(c) for c in self.selected_cycles)
@@ -1547,12 +1596,14 @@ class FileSelector:
         self.root.update()
         try:
             db = CellDatabase.get_instance()
-            dqdv_fig, plateau_stats = compute_dqdv(
+            dqdv_fig, dqdv_data = compute_dqdv(
                 self.selected_files, db, self.selected_cycles, self._data_loader
             )
             if dqdv_fig:
-                self.update_dqdv_plot(dqdv_fig, plateau_stats)
-                self._store_dqdv_stats(plateau_stats)
+                # Store raw dqdv curves for re-plotting with markers in Advanced Analysis
+                self._last_dqdv_data = dqdv_data
+                # Show plot without markers; don't populate stats yet
+                self.update_dqdv_plot(dqdv_fig)
                 self.calc_tv_btn.config(state="normal")
         except Exception as e:
             logging.debug(f"FILE_SELECTOR._on_calculate_dqdv error: {e}")
@@ -1572,11 +1623,22 @@ class FileSelector:
         self.calc_tv_btn.config(state="disabled")
         self.root.update()
         try:
+            from neware_plotter import NewarePlotter
             db = CellDatabase.get_instance()
             plateau_stats = compute_transition_voltages(
                 self.selected_files, db, self.selected_cycles, self._data_loader
             )
-            self._store_dqdv_stats(plateau_stats)
+            # Re-generate dQ/dV plot with transition markers shown
+            dqdv_data = getattr(self, '_last_dqdv_data', None)
+            new_fig = NewarePlotter(db).plot_dqdv_curves_with_loader(
+                self._data_loader, self.selected_files,
+                dqdv_data=dqdv_data,
+                display_plot=False,
+                selected_cycles=self.selected_cycles,
+                show_transition_markers=True
+            )
+            # Update plot (with markers) and populate stats table
+            self.update_dqdv_plot(new_fig if new_fig else None, plateau_stats)
         except Exception as e:
             logging.debug(f"FILE_SELECTOR._on_calculate_transition_voltage error: {e}")
         finally:
@@ -1596,6 +1658,10 @@ class FileSelector:
         # If no data provided, exit early
         if features_df is None or features_df.empty:
             return
+
+        # Store the features DataFrame for mass editing
+        self._last_features_df = features_df.copy()
+        self._update_mass_panel(features_df)
 
         # Get unique cell IDs
         cell_ids = features_df['cell ID'].unique()
@@ -1635,6 +1701,67 @@ class FileSelector:
             # Apply styling
             self.analysis_table.tag_configure('separator', background='#f0f0f0')
             self.analysis_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
+
+    def _update_mass_panel(self, features_df):
+        """Populate the mass panel with one editable entry per unique cell ID."""
+        # Clear existing widgets
+        for widget in self._mass_inner_frame.winfo_children():
+            widget.destroy()
+        self._mass_entries = {}
+
+        cell_ids = features_df['cell ID'].unique()
+        for i, cell_id in enumerate(cell_ids):
+            cell_rows = features_df[features_df['cell ID'] == cell_id]
+            # Get mass in grams from the first row that has it
+            mass_g = None
+            if 'mass (g)' in cell_rows.columns:
+                mass_vals = cell_rows['mass (g)'].dropna()
+                if not mass_vals.empty:
+                    mass_g = mass_vals.iloc[0]
+
+            ttk.Label(self._mass_inner_frame, text=str(cell_id), width=30, anchor="w").grid(
+                row=i, column=0, padx=(5, 2), pady=2, sticky="w"
+            )
+            var = tk.StringVar(value=f"{mass_g * 1000:.2f}" if mass_g is not None else "")
+            entry = ttk.Entry(self._mass_inner_frame, textvariable=var, width=10)
+            entry.grid(row=i, column=1, padx=2, pady=2)
+            ttk.Label(self._mass_inner_frame, text="mg").grid(row=i, column=2, padx=(2, 5), pady=2, sticky="w")
+            self._mass_entries[cell_id] = var
+
+    def _on_apply_mass_changes(self):
+        """Re-calculate specific capacities using updated masses from the mass panel."""
+        if not hasattr(self, '_last_features_df') or self._last_features_df is None:
+            return
+
+        updated_df = self._last_features_df.copy()
+        errors = []
+        for cell_id, var in self._mass_entries.items():
+            try:
+                new_mass_mg = float(var.get())
+                if new_mass_mg <= 0:
+                    raise ValueError("must be > 0")
+                new_mass_g = new_mass_mg / 1000.0
+            except ValueError as e:
+                errors.append(f"{cell_id}: {e}")
+                continue
+
+            mask = updated_df['cell ID'] == cell_id
+            updated_df.loc[mask, 'mass (g)'] = new_mass_g
+            if 'Charge Capacity (mAh)' in updated_df.columns:
+                updated_df.loc[mask, 'Specific Charge Capacity (mAh/g)'] = (
+                    updated_df.loc[mask, 'Charge Capacity (mAh)'] / new_mass_g
+                )
+            if 'Discharge Capacity (mAh)' in updated_df.columns:
+                updated_df.loc[mask, 'Specific Discharge Capacity (mAh/g)'] = (
+                    updated_df.loc[mask, 'Discharge Capacity (mAh)'] / new_mass_g
+                )
+
+        if errors:
+            from tkinter import messagebox
+            messagebox.showerror("Invalid Mass", "\n".join(errors))
+            return
+
+        self._update_analysis_table(updated_df)
 
     def _add_statistics_rows(self, features_df):
         """Add statistics rows to the analysis table for all selected cycles."""

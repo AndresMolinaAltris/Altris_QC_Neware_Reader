@@ -342,7 +342,8 @@ def compute_dqdv(ndax_file_list, db, selected_cycles, data_loader):
                 dqdv_data=dqdv_data,
                 display_plot=False,
                 gui_callback=None,
-                selected_cycles=selected_cycles
+                selected_cycles=selected_cycles,
+                show_transition_markers=False
             )
     except Exception as e:
         logging.debug(f"MAIN.compute_dqdv plotting error: {e}")

@@ -400,7 +400,8 @@ class NewarePlotter:
         return fig
 
     def plot_dqdv_curves_with_loader(self, data_loader, file_paths, dqdv_data=None,
-                                     display_plot=False, gui_callback=None, selected_cycles=None):
+                                     display_plot=False, gui_callback=None, selected_cycles=None,
+                                     show_transition_markers=True):
         """
         Process multiple NDAX files using DataLoader and create a combined dQ/dV plot.
 
@@ -435,11 +436,15 @@ class NewarePlotter:
             logging.debug("NEWARE_PLOTTER.No valid data to plot dQ/dV curves.")
             return None
 
-        # NEW: Generate transition voltage data directly here instead of relying on GUI callback
-        self._transition_voltages = self._extract_transition_voltages_from_dqdv_data(
-            data_loader, file_paths, cycles
-        )
-        logging.debug(f"Generated {len(self._transition_voltages)} transition voltage entries for markers")
+        # Generate transition voltage data for markers (only when requested)
+        if show_transition_markers:
+            self._transition_voltages = self._extract_transition_voltages_from_dqdv_data(
+                data_loader, file_paths, cycles
+            )
+            logging.debug(f"Generated {len(self._transition_voltages)} transition voltage entries for markers")
+        else:
+            self._transition_voltages = []
+            logging.debug("Transition markers disabled for this plot")
 
         # Create the dQ/dV plot
         with tlog(f"NewarePlotter.create_dqdv_plot n_files={len(files_data)}"):
