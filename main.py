@@ -1,3 +1,6 @@
+import timing_logger
+from timing_logger import log as tlog
+
 import sys
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
@@ -35,6 +38,8 @@ configure_logging(base_directory)
 
 # Log the start of the program
 logging.debug("MAIN. QC Neware Reader Started")
+_startup_elapsed = time.perf_counter() - timing_logger.PROGRAM_START
+logging.debug(f"[TIMING] program_startup | duration={_startup_elapsed:.3f}s | elapsed={_startup_elapsed:.3f}s")
 
 
 def _extract_features_from_files(data_loader, ndax_file_list, db, cycles_to_process=None,
@@ -133,7 +138,8 @@ def _extract_features_from_files(data_loader, ndax_file_list, db, cycles_to_proc
                 # Extract plateau statistics if requested
                 if extract_plateau_stats:
                     c_rate = DQDVAnalysis._calculate_crate_for_cycle(df, cycle, mass)
-                    plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass, c_rate=c_rate)
+                    with tlog(f"DQDVAnalysis.extract_plateaus cycle={cycle}"):
+                        plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass, c_rate=c_rate)
                     if plateau_data:
                         plateau_data["File"] = cell_ID
                         plateau_data["Cycle"] = cycle
@@ -157,7 +163,8 @@ def _load_files_to_dataloader(ndax_file_list):
     """
     data_loader = DataLoader()
     logging.debug("MAIN. Loading all NDAX files...")
-    data_loader.load_files(ndax_file_list)
+    with tlog(f"DataLoader.load_files n={len(ndax_file_list)}"):
+        data_loader.load_files(ndax_file_list)
 
     # Log cache info
     cache_info = data_loader.get_cache_info()
@@ -203,15 +210,17 @@ def process_files(ndax_file_list,
     logging.debug(f"MAIN. Using cycles: {selected_cycles}")
 
     # Load all files into DataLoader
-    data_loader = _load_files_to_dataloader(ndax_file_list)
+    with tlog(f"process_files._load_files n={len(ndax_file_list)}"):
+        data_loader = _load_files_to_dataloader(ndax_file_list)
 
     # Extract features using shared helper
-    all_features, dqdv_data, _ = _extract_features_from_files(
-        data_loader, ndax_file_list, db,
-        cycles_to_process=selected_cycles,
-        extract_dqdv_curves=True,
-        extract_plateau_stats=False
-    )
+    with tlog(f"process_files._extract_features n_files={len(ndax_file_list)} n_cycles={len(selected_cycles)}"):
+        all_features, dqdv_data, _ = _extract_features_from_files(
+            data_loader, ndax_file_list, db,
+            cycles_to_process=selected_cycles,
+            extract_dqdv_curves=True,
+            extract_plateau_stats=False
+        )
 
     # Combine all results into a single DataFrame
     if not all_features:
@@ -219,7 +228,8 @@ def process_files(ndax_file_list,
         logging.debug("MAIN.No features extracted, process_files func finished.")
         return ProcessingResult(features_df=pd.DataFrame())
 
-    final_features_df = pd.concat(all_features, ignore_index=True)
+    with tlog(f"pd.concat n_chunks={len(all_features)}"):
+        final_features_df = pd.concat(all_features, ignore_index=True)
 
     # Initialize result with features
     capacity_fig = None
@@ -233,24 +243,26 @@ def process_files(ndax_file_list,
             plotter = NewarePlotter(db)
 
             # Generate capacity plot
-            capacity_fig = plotter.plot_ndax_files_with_loader(
-                data_loader,
-                ndax_file_list,
-                display_plot=False,
-                gui_callback=None,  # No longer pass GUI callback
-                selected_cycles=selected_cycles
-            )
+            with tlog(f"NewarePlotter.plot_ndax_files n={len(ndax_file_list)}"):
+                capacity_fig = plotter.plot_ndax_files_with_loader(
+                    data_loader,
+                    ndax_file_list,
+                    display_plot=False,
+                    gui_callback=None,  # No longer pass GUI callback
+                    selected_cycles=selected_cycles
+                )
 
             # Generate dQ/dV plots
             logging.debug("MAIN.Generating dQ/dV plots...")
-            dqdv_fig = plotter.plot_dqdv_curves_with_loader(
-                data_loader,
-                ndax_file_list,
-                dqdv_data=dqdv_data,
-                display_plot=False,
-                gui_callback=None,
-                selected_cycles=selected_cycles
-            )
+            with tlog(f"NewarePlotter.plot_dqdv_curves n={len(ndax_file_list)}"):
+                dqdv_fig = plotter.plot_dqdv_curves_with_loader(
+                    data_loader,
+                    ndax_file_list,
+                    dqdv_data=dqdv_data,
+                    display_plot=False,
+                    gui_callback=None,
+                    selected_cycles=selected_cycles
+                )
 
             # Extract plateau statistics
             if dqdv_fig:
@@ -258,12 +270,13 @@ def process_files(ndax_file_list,
 
                 # C-rate is now calculated per cycle inside extract_plateaus_batch
                 dqdv_analyzer = DQDVAnalysis("plateau_extractor")
-                plateau_stats = dqdv_analyzer.extract_plateaus_batch(
-                    data_loader,
-                    db,
-                    ndax_file_list,
-                    selected_cycles
-                )
+                with tlog(f"extract_plateaus_batch n_files={len(ndax_file_list)} n_cycles={len(selected_cycles)}"):
+                    plateau_stats = dqdv_analyzer.extract_plateaus_batch(
+                        data_loader,
+                        db,
+                        ndax_file_list,
+                        selected_cycles
+                    )
                 logging.debug(f"MAIN.Extracted {len(plateau_stats)} plateau stats entries")
 
             logging.debug("MAIN.Plotting complete.")
@@ -337,8 +350,9 @@ def main():
     """
 
     # Import configuration file
-    with open("config.yaml", "r") as file:
-        config = yaml.safe_load(file)
+    with tlog("main.config_load"):
+        with open("config.yaml", "r") as file:
+            config = yaml.safe_load(file)
 
     # Import paths
     data_path = config["data_path"]
@@ -348,15 +362,17 @@ def main():
     plots_dir = config.get("plots_directory", "plots")  # New config option for plot save directory
 
     # Set cell database path for lazy loading (only loaded when NDAX metadata is missing)
-    db = CellDatabase.get_instance()
-    db.set_database_path(cell_database)
+    with tlog("main.database_init"):
+        db = CellDatabase.get_instance()
+        db.set_database_path(cell_database)
     logging.debug("MAIN. Cell database path set (will load on demand)")
 
     # Keep all processed features
     all_processed_features = []
 
     # Create the file selector instance
-    file_selector_instance = FileSelector(initial_dir=data_path, default_output_file=output_file)
+    with tlog("main.FileSelector_init"):
+        file_selector_instance = FileSelector(initial_dir=data_path, default_output_file=output_file)
 
     # Define a callback function to process files
     def process_file_callback(ndax_file_list):
@@ -388,12 +404,13 @@ def main():
         logging.debug(f"MAIN.Using selected cycles: {selected_cycles}")
 
         # Process files - returns structured ProcessingResult
-        result = process_files(
-            ndax_file_list,
-            db,
-            selected_cycles=selected_cycles,
-            enable_plotting=enable_plotting
-        )
+        with tlog(f"process_files n={len(ndax_file_list)}"):
+            result = process_files(
+                ndax_file_list,
+                db,
+                selected_cycles=selected_cycles,
+                enable_plotting=enable_plotting
+            )
 
         if result.features_df.empty:
             return None
@@ -406,14 +423,17 @@ def main():
         try:
             # Update capacity plot
             if result.capacity_fig:
-                file_selector_instance.update_plot(result.capacity_fig)
+                with tlog("GUI.update_plot"):
+                    file_selector_instance.update_plot(result.capacity_fig)
 
             # Update analysis table
-            file_selector_instance._update_analysis_table(result.features_df)
+            with tlog("GUI._update_analysis_table"):
+                file_selector_instance._update_analysis_table(result.features_df)
 
             # Update dQ/dV plot and stats
             if result.dqdv_fig and result.plateau_stats:
-                file_selector_instance.update_dqdv_plot(result.dqdv_fig, result.plateau_stats)
+                with tlog("GUI.update_dqdv_plot"):
+                    file_selector_instance.update_dqdv_plot(result.dqdv_fig, result.plateau_stats)
                 file_selector_instance._store_dqdv_stats(result.plateau_stats)
 
         except Exception as e:

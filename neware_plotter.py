@@ -1,6 +1,7 @@
 from common.imports import plt, gridspec, os, logging, NewareNDA, Path
 from common.project_imports import CellDatabase, extract_cell_id
 from constants import STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE
+from timing_logger import log as tlog
 
 
 DEFAULT_CYCLES = [1, 2, 3]  # Default cycles to plot
@@ -233,7 +234,8 @@ class NewarePlotter:
             filename_stem = os.path.basename(file_path).split(".")[0]
 
             # Process data for plotting
-            plot_data = self._prepare_plot_data_from_dataframe(df, filename_stem, cycles)
+            with tlog(f"NewarePlotter.prepare_plot_data '{filename_stem}'"):
+                plot_data = self._prepare_plot_data_from_dataframe(df, filename_stem, cycles)
 
             if plot_data is not None:
                 logging.debug(f"NEWARE_PLOTTER.Processed cached data for {filename_stem}")
@@ -252,7 +254,8 @@ class NewarePlotter:
             return fig
 
         # Create plot
-        fig = self.create_plot(files_data, selected_cycles=cycles, display_plot=display_plot)
+        with tlog(f"NewarePlotter.create_plot n_files={len(files_data)}"):
+            fig = self.create_plot(files_data, selected_cycles=cycles, display_plot=display_plot)
 
         # If a GUI callback was provided, send the figure to it
         if gui_callback and fig is not None:
@@ -439,7 +442,8 @@ class NewarePlotter:
         logging.debug(f"Generated {len(self._transition_voltages)} transition voltage entries for markers")
 
         # Create the dQ/dV plot
-        fig = self.create_dqdv_plot(files_data, dqdv_data, selected_cycles=cycles, display_plot=display_plot)
+        with tlog(f"NewarePlotter.create_dqdv_plot n_files={len(files_data)}"):
+            fig = self.create_dqdv_plot(files_data, dqdv_data, selected_cycles=cycles, display_plot=display_plot)
 
         # If a GUI callback was provided, send the figure to it
         if gui_callback and fig is not None:

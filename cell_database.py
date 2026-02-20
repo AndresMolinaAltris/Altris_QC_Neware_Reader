@@ -1,4 +1,6 @@
-from common.imports import pd, os, pickle, time, hashlib
+from common.imports import pd, os, pickle, time, hashlib, logging
+import timing_logger
+from timing_logger import log as tlog
 
 
 class CellDatabase:
@@ -54,8 +56,8 @@ class CellDatabase:
         # Try to load from cache first if not forcing reload
         if os.path.exists(cache_path) and not force_reload:
             try:
-                start_time = time.time()
-                print("Loading cell database from cache...")
+                _t0 = time.perf_counter()
+                logging.debug("CellDatabase: Loading cell database from cache...")
                 with open(cache_path, 'rb') as f:
                     self.mass_data = pickle.load(f)
 
@@ -63,26 +65,27 @@ class CellDatabase:
                 self._lowercase_keys = {k.lower(): k for k in self.mass_data.keys()}
 
                 self._is_loaded = True
-                elapsed = time.time() - start_time
-                print(f"Database loaded from cache with {len(self.mass_data)} entries in {elapsed:.2f} seconds")
+                _dur = time.perf_counter() - _t0
+                _elp = time.perf_counter() - timing_logger.PROGRAM_START
+                logging.debug(f"[TIMING] CellDatabase.load_database [cache] n={len(self.mass_data)} | duration={_dur:.3f}s | elapsed={_elp:.3f}s")
                 return
             except Exception as e:
-                print(f"Error loading cache: {e}. Loading from Excel file instead.")
+                logging.warning(f"CellDatabase: Error loading cache: {e}. Loading from Excel file instead.")
 
         # If no cache or cache loading failed, load from Excel
-        print("Loading cell database from Excel (this may take a while)...")
-        start_time = time.time()
+        logging.debug("CellDatabase: Loading cell database from Excel (this may take a while)...")
+        _excel_t0 = time.perf_counter()
 
         # Use openpyxl engine with read_only mode for better performance
         try:
             xls = pd.ExcelFile(excel_path, engine='openpyxl')
         except Exception as e:
-            print(f"Error opening Excel file: {e}")
+            logging.warning(f"CellDatabase: Error opening Excel file: {e}")
             try:
                 # Fallback to default engine if openpyxl fails
                 xls = pd.ExcelFile(excel_path)
             except Exception as e2:
-                print(f"Error: Could not open Excel file with any engine: {e2}")
+                logging.error(f"CellDatabase: Could not open Excel file with any engine: {e2}")
                 raise RuntimeError(f"Failed to open database file '{excel_path}'. Check if the file is corrupted or in use.")
 
         total_entries = 0
@@ -210,8 +213,9 @@ class CellDatabase:
         self._lowercase_keys = {k.lower(): k for k in self.mass_data.keys()}
 
         self._is_loaded = True
-        elapsed = time.time() - start_time
-        print(f"Database loaded with {total_entries} entries in {elapsed:.2f} seconds")
+        _excel_dur = time.perf_counter() - _excel_t0
+        _excel_elp = time.perf_counter() - timing_logger.PROGRAM_START
+        logging.debug(f"[TIMING] CellDatabase.load_database [excel] n={total_entries} | duration={_excel_dur:.3f}s | elapsed={_excel_elp:.3f}s")
 
         # Report any issues encountered
         if skipped_sheets:
@@ -242,7 +246,8 @@ class CellDatabase:
     def get_mass(self, cell_id):
         """Quick lookup of cell mass from cache. Lazy-loads database if path was set."""
         if not self._is_loaded:
-            self._ensure_loaded()
+            with tlog("CellDatabase._ensure_loaded (first call)"):
+                self._ensure_loaded()
         if not self._is_loaded:
             return None
 

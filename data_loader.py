@@ -1,5 +1,8 @@
 from common.imports import pd, os, logging, Path, Dict, List, Optional
 import re
+import time
+import timing_logger
+from timing_logger import log as tlog
 from NewareNDA.NewareNDAx import read_ndax
 from cell_database import CellDatabase
 
@@ -41,12 +44,15 @@ class DataLoader:
 
                 # Skip if already loaded
                 if file_path in self._cache:
+                    _elapsed = time.perf_counter() - timing_logger.PROGRAM_START
+                    logging.debug(f"[TIMING] DataLoader cache hit '{os.path.basename(file_path)}' | duration=0.000s | elapsed={_elapsed:.3f}s")
                     logging.debug(f"DATA_LOADER: File already cached: {os.path.basename(file_path)}")
                     continue
 
                 # Load the file
                 logging.debug(f"DATA_LOADER: Loading file: {os.path.basename(file_path)}")
-                df = read_ndax(file_path, software_cycle_number=True)
+                with tlog(f"DataLoader.read_ndax('{os.path.basename(file_path)}')"):
+                    df = read_ndax(file_path, software_cycle_number=True)
 
                 # Fallback logic for active mass: use CellDatabase (lazy-loaded singleton)
                 if df.attrs.get('active_mass') is None:

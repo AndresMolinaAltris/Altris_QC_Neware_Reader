@@ -1,6 +1,9 @@
 from common.imports import os, np, pd, logging, Path
 from scipy.signal import savgol_filter, find_peaks
 from data_import import extract_cell_id
+import time
+import timing_logger
+from timing_logger import log as tlog
 from constants import (
     STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, STATUS_REST,
     CHARGE_STATUSES, DISCHARGE_STATUSES,
@@ -31,27 +34,38 @@ class Features:
         :param mass: Float representing the mass of active material (default: 1.0 g).
         :return: pandas DataFrame containing extracted features.
         """
-        features = {}
+        _IR_FUNC_NAMES = {
+            'extract_internal_resistance_soc_100': 'Features.IR_soc100',
+            'extract_internal_resistance_soc_0': 'Features.IR_soc0',
+        }
 
-        # List of feature extraction functions and their arguments
-        functions = [
-            (self.extract_charge_capacity, (df, features, cycle, mass)),
-            (self.extract_discharge_capacity, (df, features, cycle, mass)),
-            (self.extract_internal_resistance_soc_100, (df, features, cycle)),
-            (self.extract_internal_resistance_soc_0, (df, features, cycle)),
-            (self.extract_coulombic_efficiency, (df, features, cycle))  # Add the new function
-        ]
+        with tlog(f"Features.extract cycle={cycle}"):
+            features = {}
 
-        # Attempt to extract features, handling errors
-        for func, args in functions:
-            try:
-                func(*args)
-            except Exception:
-                # Generate a feature name dynamically from function name
-                feature_name = func.__name__.replace("extract_", "").replace("_", " ").title()
-                features[feature_name] = np.nan  # Assign NaN in case of an error
+            # List of feature extraction functions and their arguments
+            functions = [
+                (self.extract_charge_capacity, (df, features, cycle, mass)),
+                (self.extract_discharge_capacity, (df, features, cycle, mass)),
+                (self.extract_internal_resistance_soc_100, (df, features, cycle)),
+                (self.extract_internal_resistance_soc_0, (df, features, cycle)),
+                (self.extract_coulombic_efficiency, (df, features, cycle))  # Add the new function
+            ]
 
-        return pd.DataFrame(features, index=[0])
+            # Attempt to extract features, handling errors
+            for func, args in functions:
+                _label = _IR_FUNC_NAMES.get(func.__name__)
+                try:
+                    if _label:
+                        with tlog(f"{_label} cycle={cycle}"):
+                            func(*args)
+                    else:
+                        func(*args)
+                except Exception:
+                    # Generate a feature name dynamically from function name
+                    feature_name = func.__name__.replace("extract_", "").replace("_", " ").title()
+                    features[feature_name] = np.nan  # Assign NaN in case of an error
+
+            return pd.DataFrame(features, index=[0])
 
     def extract_internal_resistance_soc_0(self, df, features, cycle):
         label = "Internal Resistance at SOC 0 (Ohms)"
@@ -429,8 +443,10 @@ class DQDVAnalysis:
             discharge_data = cycle_df[cycle_df[COL_STATUS] == STATUS_CC_DISCHARGE].copy()
 
             # Get dQ/dV data for charge and discharge
-            charge_dqdv = self._calculate_dqdv(charge_data, 'charge', mass, pre_smooth=True)
-            discharge_dqdv = self._calculate_dqdv(discharge_data, 'discharge', mass, pre_smooth=True)
+            with tlog(f"DQDVAnalysis._calculate_dqdv(charge) cycle={cycle}"):
+                charge_dqdv = self._calculate_dqdv(charge_data, 'charge', mass, pre_smooth=True)
+            with tlog(f"DQDVAnalysis._calculate_dqdv(discharge) cycle={cycle}"):
+                discharge_dqdv = self._calculate_dqdv(discharge_data, 'discharge', mass, pre_smooth=True)
 
             return {
                 'charge': charge_dqdv,
@@ -584,7 +600,8 @@ class DQDVAnalysis:
             # If transition_voltage is not provided, try inflection point detection
             if transition_voltage is None:
                 # Try to find inflection points using new method with separate voltage ranges
-                inflection_result = self.find_inflection_point(df, cycle, charge_voltage_range, discharge_voltage_range)
+                with tlog(f"DQDVAnalysis.find_inflection_point cycle={cycle}"):
+                    inflection_result = self.find_inflection_point(df, cycle, charge_voltage_range, discharge_voltage_range)
 
                 if inflection_result:
                     # Use inflection points if available
@@ -754,6 +771,7 @@ class DQDVAnalysis:
             List of dictionaries with plateau capacity statistics for GUI display
         """
         logging.debug("DQDVAnalysis.extract_plateaus_batch started")
+        _batch_t0 = time.perf_counter()
 
         # Use default cycles if none provided
         if selected_cycles is None:
@@ -801,10 +819,11 @@ class DQDVAnalysis:
                     logging.debug(f"extract_plateaus_batch: Calculated c_rate={cycle_c_rate} for {filename_stem}, cycle {cycle}")
 
                     # Extract plateau capacities with per-cycle C-rate
-                    plateau_data = self.extract_plateaus(df, cycle, mass,
-                                                         charge_voltage_range=charge_voltage_range,
-                                                         discharge_voltage_range=discharge_voltage_range,
-                                                         c_rate=cycle_c_rate)
+                    with tlog(f"DQDVAnalysis.extract_plateaus cycle={cycle}"):
+                        plateau_data = self.extract_plateaus(df, cycle, mass,
+                                                             charge_voltage_range=charge_voltage_range,
+                                                             discharge_voltage_range=discharge_voltage_range,
+                                                             c_rate=cycle_c_rate)
 
                     if plateau_data:
                         # Add file and cycle information
@@ -816,6 +835,11 @@ class DQDVAnalysis:
                 except Exception as e:
                     logging.debug(f"Error extracting plateau data for {filename_stem}, cycle {cycle}: {e}")
 
+        _batch_dur = time.perf_counter() - _batch_t0
+        _batch_elp = time.perf_counter() - timing_logger.PROGRAM_START
+        n_files = len(file_list)
+        n_cycles = len(selected_cycles) if selected_cycles else 0
+        logging.debug(f"[TIMING] DQDVAnalysis.extract_plateaus_batch n_files={n_files} n_cycles={n_cycles} | duration={_batch_dur:.3f}s | elapsed={_batch_elp:.3f}s")
         logging.debug("DQDVAnalysis.extract_plateaus_batch finished")
         return stats
 
