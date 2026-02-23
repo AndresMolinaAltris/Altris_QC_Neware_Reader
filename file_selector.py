@@ -695,6 +695,40 @@ class FileSelector:
         self.complete_table.tag_configure('separator', background='#f0f0f0')
         self.complete_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
 
+    def _repopulate_complete_table(self):
+        """Re-render the Complete Analysis treeview from the current _complete_analysis_data.
+
+        Call this after mutating _complete_analysis_data in-place (e.g. after a mass update)
+        to reflect the new values without re-running the full analysis pipeline.
+        """
+        if not hasattr(self, 'complete_table'):
+            return
+
+        for item in self.complete_table.get_children():
+            self.complete_table.delete(item)
+
+        if not self._complete_analysis_data:
+            return
+
+        cycles = sorted(set(row['Cycle'] for row in self._complete_analysis_data))
+        for cycle in cycles:
+            cycle_data = [row for row in self._complete_analysis_data if row['Cycle'] == cycle]
+            for row in cycle_data:
+                values = [row[col] for col in self.complete_columns]
+                self.complete_table.insert('', 'end', values=values)
+            self._add_complete_statistics_rows(cycle_data, cycle)
+            if cycle != cycles[-1]:
+                separator_values = ['-'] * len(self.complete_columns)
+                separator_id = self.complete_table.insert('', 'end', values=separator_values)
+                self.complete_table.item(separator_id, tags=('separator',))
+
+        self.complete_table.tag_configure('separator', background='#f0f0f0')
+        self.complete_table.tag_configure('statistic', background='#e6f2ff', font=('', 9, 'bold'))
+
+        # Restore rate retention values from cache
+        if self._rate_retention_cache:
+            self._update_rate_retention_in_table()
+
     def _add_complete_statistics_rows(self, cycle_data, cycle):
         """Add statistics rows for a specific cycle."""
         if not cycle_data:
@@ -1268,16 +1302,43 @@ class FileSelector:
 
         return rate_tab
 
+    def _build_rc_data_from_features_df(self, features_df, direction):
+        """Build rate-capability input rows from the basic features DataFrame.
+
+        This is used as a fallback when _complete_analysis_data is not yet available
+        (i.e. the user has run 'Process Files' but not 'Generate Complete Analysis').
+
+        Args:
+            features_df: DataFrame from process_files() with columns 'cell ID', 'Cycle',
+                'Specific Charge Capacity (mAh/g)', 'Specific Discharge Capacity (mAh/g)'.
+            direction: "Charge" or "Discharge".
+
+        Returns:
+            List of dicts with keys cell_id, cycle, c_rate, capacity.
+        """
+        cap_col = (
+            "Specific Charge Capacity (mAh/g)"
+            if direction == "Charge"
+            else "Specific Discharge Capacity (mAh/g)"
+        )
+        rows = []
+        for _, row in features_df.iterrows():
+            cap_val = row.get(cap_col)
+            rows.append({
+                "cell_id": row.get("cell ID", ""),
+                "cycle": row.get("Cycle", ""),
+                "c_rate": "N/A",
+                "capacity": cap_val if pd.notnull(cap_val) else float("nan"),
+            })
+        return rows
+
     def _on_generate_rate_capability(self):
-        """Generate Rate Capability analysis from the stored Complete Analysis data."""
+        """Generate Rate Capability analysis.
 
-        if not self._complete_analysis_data:
-            messagebox.showerror(
-                "No Data",
-                "Complete Analysis must be generated first before running Rate Capability."
-            )
-            return
-
+        Uses _complete_analysis_data when available (populated by 'Generate Complete Analysis'
+        or automatically after 'Process Files'). Falls back to _last_features_df so that
+        Rate Capability can run independently of the Complete Analysis tab.
+        """
         direction = self._rc_direction.get()
         cap_col = ("Specific Charge Cap (mAh/g)" if direction == "Charge"
                    else "Specific Discharge Cap (mAh/g)")
@@ -1289,15 +1350,31 @@ class FileSelector:
             messagebox.showerror("Invalid Input", "Normalize-to cycle must be an integer.")
             return
 
-        # Build a DataFrame from consolidated data for easy grouping
-        rows = []
-        for r in self._complete_analysis_data:
-            rows.append({
-                "cell_id": r["Cell ID"],
-                "cycle": r["Cycle"],
-                "c_rate": r["Charge C-Rate"] if direction == "Charge" else r["Discharge C-Rate"],
-                "capacity": r.get(cap_col, "N/A"),
-            })
+        # --- Build input rows from the best available data source ---
+        if self._complete_analysis_data:
+            # Preferred: rich consolidated data (may cover all cycles)
+            rows = []
+            for r in self._complete_analysis_data:
+                rows.append({
+                    "cell_id": r["Cell ID"],
+                    "cycle": r["Cycle"],
+                    "c_rate": r["Charge C-Rate"] if direction == "Charge" else r["Discharge C-Rate"],
+                    "capacity": r.get(cap_col, "N/A"),
+                })
+        elif hasattr(self, '_last_features_df') and self._last_features_df is not None:
+            # Fallback: basic features from Process Files (only selected cycles)
+            logging.debug(
+                "Rate Capability: _complete_analysis_data is empty; "
+                "falling back to _last_features_df"
+            )
+            rows = self._build_rc_data_from_features_df(self._last_features_df, direction)
+        else:
+            messagebox.showerror(
+                "No Data",
+                "Please process files first before running Rate Capability."
+            )
+            return
+
         df_rc = pd.DataFrame(rows)
 
         # Convert capacity to numeric, coercing N/A to NaN
@@ -1335,10 +1412,10 @@ class FileSelector:
                 self._rate_retention_cache[key] = {"chg": None, "dchg": None}
             self._rate_retention_cache[key][retention_key] = retention
 
-        # Populate treeview
+        # Populate treeview — grouped by cycle first, then by cell
         for item in self._rc_results_tree.get_children():
             self._rc_results_tree.delete(item)
-        for r in sorted(results, key=lambda x: (x["cell_id"], x["cycle"])):
+        for r in sorted(results, key=lambda x: (x["cycle"], x["cell_id"])):
             self._rc_results_tree.insert("", "end", values=(
                 r["cell_id"],
                 r["cycle"],
@@ -1521,8 +1598,15 @@ class FileSelector:
             self.root.destroy()
             logging.debug("FILE_SELECTOR. Root window destroyed.")
 
-    def update_plot(self, fig):
-        """Update the plot in the GUI with a new figure."""
+    def update_plot(self, fig, update_analysis_table=True):
+        """Update the plot in the GUI with a new figure.
+
+        Args:
+            fig: The matplotlib figure to display.
+            update_analysis_table (bool): If True (default), also refreshes the Tab 2 analysis
+                table after updating the plot canvas. Pass False when the caller has already
+                updated Tab 2 independently (e.g. after a mass change).
+        """
         # Check if root window still exists
         if not hasattr(self, 'root') or not self.root.winfo_exists():
             print("Warning: Attempted to update plot after window was closed")
@@ -1576,8 +1660,9 @@ class FileSelector:
             # Pack the canvas to fill the available space
             self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-            # Update analysis tab with new data
-            self._update_analysis_table()
+            # Update analysis tab with new data (can be suppressed when caller manages Tab 2)
+            if update_analysis_table:
+                self._update_analysis_table()
 
         except Exception as e:
             print(f"Error updating plot: {e}")
@@ -1729,11 +1814,19 @@ class FileSelector:
             self._mass_entries[cell_id] = var
 
     def _on_apply_mass_changes(self):
-        """Re-calculate specific capacities using updated masses from the mass panel."""
+        """Re-calculate specific capacities using updated masses from the mass panel.
+
+        Propagates the new masses to:
+          - Tab 2 (Specific capacity results table)
+          - Tab 1 (Charge vs Voltage capacity plot)
+          - Tab 5 (Complete Analysis table, if data exists)
+          - Tab 4 (Rate Capability, if already generated)
+        """
         if not hasattr(self, '_last_features_df') or self._last_features_df is None:
             return
 
         updated_df = self._last_features_df.copy()
+        mass_updates = {}  # {cell_id: new_mass_g}
         errors = []
         for cell_id, var in self._mass_entries.items():
             try:
@@ -1755,13 +1848,64 @@ class FileSelector:
                 updated_df.loc[mask, 'Specific Discharge Capacity (mAh/g)'] = (
                     updated_df.loc[mask, 'Discharge Capacity (mAh)'] / new_mass_g
                 )
+            mass_updates[cell_id] = new_mass_g
 
         if errors:
             from tkinter import messagebox
             messagebox.showerror("Invalid Mass", "\n".join(errors))
             return
 
+        # --- Tab 2: Specific capacity results ---
         self._update_analysis_table(updated_df)
+
+        # --- Tab 1: Capacity plot ---
+        if mass_updates and self.selected_files:
+            active_loader = (
+                getattr(self, '_raw_data_loader', None)
+                or getattr(self, '_data_loader', None)
+            )
+            if active_loader is not None:
+                try:
+                    from pathlib import Path
+                    from data_import import extract_cell_id as _ecid
+                    from neware_plotter import NewarePlotter
+                    from common.project_imports import CellDatabase
+                    db = CellDatabase.get_instance()
+                    plotter = NewarePlotter(db)
+                    new_fig = plotter.plot_ndax_files_with_loader(
+                        active_loader, self.selected_files,
+                        display_plot=False,
+                        selected_cycles=self.selected_cycles,
+                        mass_overrides=mass_updates,
+                    )
+                    if new_fig:
+                        # update_analysis_table=False: Tab 2 is already updated above
+                        self.update_plot(new_fig, update_analysis_table=False)
+                except Exception as e:
+                    logging.debug(f"FILE_SELECTOR. Error refreshing capacity plot after mass change: {e}")
+
+        # --- Tab 5: Complete Analysis ---
+        if mass_updates and self._complete_analysis_data:
+            for row in self._complete_analysis_data:
+                cid = row.get("Cell ID")
+                if cid not in mass_updates:
+                    continue
+                new_mass_g = mass_updates[cid]
+                try:
+                    chg_cap_str = row.get("Charge Cap (mAh)", "N/A")
+                    if chg_cap_str != "N/A":
+                        row["Specific Charge Cap (mAh/g)"] = f"{float(chg_cap_str) / new_mass_g:.3f}"
+                    dchg_cap_str = row.get("Discharge Cap (mAh)", "N/A")
+                    if dchg_cap_str != "N/A":
+                        row["Specific Discharge Cap (mAh/g)"] = f"{float(dchg_cap_str) / new_mass_g:.3f}"
+                except (ValueError, ZeroDivisionError):
+                    pass
+            self._repopulate_complete_table()
+
+            # --- Tab 4: Rate Capability (re-run if already generated) ---
+            if (hasattr(self, '_rc_results_tree')
+                    and self._rc_results_tree.get_children()):
+                self._on_generate_rate_capability()
 
     def _add_statistics_rows(self, features_df):
         """Add statistics rows to the analysis table for all selected cycles."""

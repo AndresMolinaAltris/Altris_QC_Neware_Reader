@@ -195,7 +195,8 @@ class NewarePlotter:
         return fig
 
     def plot_ndax_files_with_loader(self, data_loader, file_paths, display_plot=False,
-                                    gui_callback=None, selected_cycles=None):
+                                    gui_callback=None, selected_cycles=None,
+                                    mass_overrides=None):
         """
         Process multiple NDAX files using DataLoader and create a combined plot.
 
@@ -204,6 +205,8 @@ class NewarePlotter:
             file_paths (list): List of paths to NDAX files (for reference)
             display_plot (bool): Whether to display the plot
             gui_callback (callable, optional): Function to call with the figure for GUI display
+            mass_overrides (dict, optional): Mapping of cell_id -> mass_g to override the
+                default mass resolution (NDAX metadata → database → 1.0g)
             selected_cycles (list, optional): List of cycles to plot. Defaults to [1, 2, 3].
 
         Returns:
@@ -235,7 +238,9 @@ class NewarePlotter:
 
             # Process data for plotting
             with tlog(f"NewarePlotter.prepare_plot_data '{filename_stem}'"):
-                plot_data = self._prepare_plot_data_from_dataframe(df, filename_stem, cycles)
+                plot_data = self._prepare_plot_data_from_dataframe(
+                    df, filename_stem, cycles, mass_overrides=mass_overrides
+                )
 
             if plot_data is not None:
                 logging.debug(f"NEWARE_PLOTTER.Processed cached data for {filename_stem}")
@@ -457,7 +462,8 @@ class NewarePlotter:
         logging.debug("NEWARE_PLOTTER.plot_dqdv_curves_with_loader func finished")
         return fig
 
-    def _prepare_plot_data_from_dataframe(self, df, filename_stem, selected_cycles):
+    def _prepare_plot_data_from_dataframe(self, df, filename_stem, selected_cycles,
+                                          mass_overrides=None):
         """
         Prepare plot data from a cached DataFrame instead of reading from file.
 
@@ -465,6 +471,8 @@ class NewarePlotter:
             df: Cached DataFrame from DataLoader
             filename_stem: Filename stem for cell ID extraction
             selected_cycles: List of cycles to include
+            mass_overrides (dict, optional): Mapping of cell_id -> mass_g that takes priority
+                over NDAX metadata and database lookups.
 
         Returns:
             Processed DataFrame ready for plotting, or None if no valid data
@@ -475,18 +483,23 @@ class NewarePlotter:
             # Extract cell ID from the filename
             cell_id = extract_cell_id(filename_stem)
 
-            # Get active mass: prefer NDAX metadata (already in memory), fall back to database
-            ndax_mass = df.attrs.get('active_mass')
-            if ndax_mass is not None and ndax_mass > 0:
-                mass = ndax_mass
-                logging.debug(f"NEWARE_PLOTTER. Using active mass from NDAX metadata for {cell_id}: {mass}g")
+            # Mass resolution order: explicit override > NDAX metadata > database > default
+            if mass_overrides and cell_id in mass_overrides:
+                mass = mass_overrides[cell_id]
+                logging.debug(f"NEWARE_PLOTTER. Using override mass for {cell_id}: {mass}g")
             else:
-                mass = self.db.get_mass(cell_id)
-                if mass is not None and mass > 0:
-                    logging.debug(f"NEWARE_PLOTTER. Using active mass from database for {cell_id}: {mass}g")
+                # Get active mass: prefer NDAX metadata (already in memory), fall back to database
+                ndax_mass = df.attrs.get('active_mass')
+                if ndax_mass is not None and ndax_mass > 0:
+                    mass = ndax_mass
+                    logging.debug(f"NEWARE_PLOTTER. Using active mass from NDAX metadata for {cell_id}: {mass}g")
                 else:
-                    logging.debug(f"NEWARE_PLOTTER. No mass found for cell ID {cell_id}, using 1.0g")
-                    mass = 1.0
+                    mass = self.db.get_mass(cell_id)
+                    if mass is not None and mass > 0:
+                        logging.debug(f"NEWARE_PLOTTER. Using active mass from database for {cell_id}: {mass}g")
+                    else:
+                        logging.debug(f"NEWARE_PLOTTER. No mass found for cell ID {cell_id}, using 1.0g")
+                        mass = 1.0
 
             # Filter relevant columns for plotting
             plot_data = df[['Cycle', 'Status', 'Voltage', 'Charge_Capacity(mAh)', 'Discharge_Capacity(mAh)']].copy()
