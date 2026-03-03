@@ -561,7 +561,8 @@ class DQDVAnalysis:
                          transition_voltage=None,
                          charge_voltage_range=None,
                          discharge_voltage_range=None,
-                         c_rate=None):
+                         c_rate=None,
+                         discharge_c_rate=None):
         """
         Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
 
@@ -577,9 +578,12 @@ class DQDVAnalysis:
             charge_voltage_range: Tuple with min and max voltage for charge inflection point detection
                 If None, will be resolved from c_rate parameter
             discharge_voltage_range: Tuple with min and max voltage for discharge inflection point detection
-                If None, will be resolved from c_rate parameter
-            c_rate: Optional float representing the C-rate for this cycle
-                Used to automatically determine appropriate voltage ranges if not explicitly provided
+                If None, will be resolved from discharge_c_rate (or c_rate) parameter
+            c_rate: Optional float representing the charge C-rate for this cycle
+                Used to automatically determine appropriate charge voltage ranges if not explicitly provided
+            discharge_c_rate: Optional float representing the discharge C-rate for this cycle
+                Used to automatically determine appropriate discharge voltage ranges if not explicitly provided.
+                If None, falls back to c_rate.
 
         Returns:
             Dictionary containing plateau capacities for both charge and discharge
@@ -588,13 +592,14 @@ class DQDVAnalysis:
 
         try:
             # Resolve voltage ranges from c_rate if not explicitly provided
-            if charge_voltage_range is None or discharge_voltage_range is None:
-                resolved_charge, resolved_discharge = self.get_voltage_ranges(c_rate)
-                if charge_voltage_range is None:
-                    charge_voltage_range = resolved_charge
-                if discharge_voltage_range is None:
-                    discharge_voltage_range = resolved_discharge
-                logging.debug(f"extract_plateaus: Using c_rate={c_rate} -> charge_range={charge_voltage_range}, discharge_range={discharge_voltage_range}")
+            if charge_voltage_range is None:
+                resolved_charge, _ = self.get_voltage_ranges(c_rate)
+                charge_voltage_range = resolved_charge
+            if discharge_voltage_range is None:
+                effective_discharge_crate = discharge_c_rate if discharge_c_rate is not None else c_rate
+                _, resolved_discharge = self.get_voltage_ranges(effective_discharge_crate)
+                discharge_voltage_range = resolved_discharge
+            logging.debug(f"extract_plateaus: Using c_rate={c_rate}, discharge_c_rate={discharge_c_rate} -> charge_range={charge_voltage_range}, discharge_range={discharge_voltage_range}")
 
             # Define default transition voltage
             default_transition_voltage = 3.2  # V
@@ -706,9 +711,28 @@ class DQDVAnalysis:
             }
 
     @staticmethod
+    def _snap_to_standard_rate(raw_c_rate):
+        """
+        Snap a raw C-rate value to the nearest standard C-rate if within 15% tolerance.
+
+        Args:
+            raw_c_rate: Raw C-rate float, or None
+
+        Returns:
+            Snapped C-rate float, the original value if no standard rate is close, or None
+        """
+        if raw_c_rate is None:
+            return None
+        standard_rates = [0.1, 0.2, 0.33, 0.5, 1, 2, 3, 5, 10]
+        nearest = min(standard_rates, key=lambda x: abs(x - raw_c_rate))
+        if abs(raw_c_rate - nearest) / nearest <= 0.15:
+            return nearest
+        return raw_c_rate
+
+    @staticmethod
     def _calculate_crate_for_cycle(df, cycle, active_mass_g):
         """
-        Calculate C-rate for a specific cycle using current and active mass.
+        Calculate C-rate for a specific cycle using charge current and active mass.
 
         Args:
             df: DataFrame with battery data
@@ -728,22 +752,39 @@ class DQDVAnalysis:
             if not charge_data.empty:
                 charge_current = abs(charge_data[COL_CURRENT].mean())
                 nominal_capacity = active_mass_g * SPECIFIC_CAPACITY
-                c_rate = charge_current / nominal_capacity if nominal_capacity > 0 else None
-
-                # Round to nearest standard C-rate if within 15% tolerance
-                standard_rates = [0.1, 0.2, 0.33, 0.5, 1, 2, 3, 5, 10]
-                if c_rate is not None:
-                    nearest = min(standard_rates, key=lambda x: abs(x - c_rate))
-                    if abs(c_rate - nearest) / nearest <= 0.15:
-                        return nearest
-
-                return c_rate
+                raw_rate = charge_current / nominal_capacity if nominal_capacity > 0 else None
+                return DQDVAnalysis._snap_to_standard_rate(raw_rate)
 
             return None
 
         except Exception as e:
             logging.debug(f"DQDVAnalysis: Error calculating C-rate for cycle {cycle}: {e}")
             return None
+
+    @staticmethod
+    def _calculate_crates_for_cycle(df, cycle, active_mass_g):
+        """
+        Calculate separate charge and discharge C-rates for a specific cycle.
+
+        Args:
+            df: DataFrame with battery data
+            cycle: Cycle number
+            active_mass_g: Active mass in grams
+
+        Returns:
+            Tuple of (charge_c_rate, discharge_c_rate) — either may be None
+        """
+        if active_mass_g is None or active_mass_g <= 0:
+            return None, None
+
+        SPECIFIC_CAPACITY = 150  # mAh/g
+        charge_current, discharge_current = DQDVAnalysis._extract_cycle_currents(df, cycle)
+        nominal_cap = active_mass_g * SPECIFIC_CAPACITY
+
+        charge_c_rate = DQDVAnalysis._snap_to_standard_rate(charge_current / nominal_cap) if charge_current and nominal_cap > 0 else None
+        discharge_c_rate = DQDVAnalysis._snap_to_standard_rate(discharge_current / nominal_cap) if discharge_current and nominal_cap > 0 else None
+
+        return charge_c_rate, discharge_c_rate
 
     @staticmethod
     def _extract_cycle_currents(df, cycle):
@@ -840,16 +881,17 @@ class DQDVAnalysis:
                     continue
 
                 try:
-                    # Calculate C-rate for this specific cycle
-                    cycle_c_rate = self._calculate_crate_for_cycle(df, cycle, mass)
-                    logging.debug(f"extract_plateaus_batch: Calculated c_rate={cycle_c_rate} for {filename_stem}, cycle {cycle}")
+                    # Calculate separate charge/discharge C-rates for this cycle
+                    charge_c_rate, discharge_c_rate = self._calculate_crates_for_cycle(df, cycle, mass)
+                    logging.debug(f"extract_plateaus_batch: c_rate={charge_c_rate}, discharge_c_rate={discharge_c_rate} for {filename_stem}, cycle {cycle}")
 
-                    # Extract plateau capacities with per-cycle C-rate
+                    # Extract plateau capacities with per-cycle C-rates
                     with tlog(f"DQDVAnalysis.extract_plateaus cycle={cycle}"):
                         plateau_data = self.extract_plateaus(df, cycle, mass,
                                                              charge_voltage_range=charge_voltage_range,
                                                              discharge_voltage_range=discharge_voltage_range,
-                                                             c_rate=cycle_c_rate)
+                                                             c_rate=charge_c_rate,
+                                                             discharge_c_rate=discharge_c_rate)
 
                     if plateau_data:
                         # Add file and cycle information
@@ -876,7 +918,7 @@ class DQDVAnalysis:
                               discharge_voltage_range=(2.5, 3.5)):
         """
         Find inflection point using dV/dQ gradient analysis with peak detection.
-        Uses capacity constraints (35-65% of total capacity) followed by voltage range filtering.
+        Uses capacity constraints (25-75% of total capacity) followed by voltage range filtering.
 
         Args:
             df: DataFrame with battery data
@@ -922,18 +964,18 @@ class DQDVAnalysis:
             volt = seg_data[COL_VOLTAGE].values
             cap = seg_data[capacity_col].values
 
-            # STEP 1: Apply capacity constraint (35-65% of total capacity change)
+            # STEP 1: Apply capacity constraint (25-75% of total capacity change)
             total_capacity_change = cap[-1] - cap[0]
-            capacity_35_percent = cap[0] + 0.35 * total_capacity_change
-            capacity_65_percent = cap[0] + 0.65 * total_capacity_change
+            capacity_25_percent = cap[0] + 0.25 * total_capacity_change
+            capacity_75_percent = cap[0] + 0.75 * total_capacity_change
 
             # Create capacity mask
             if status == STATUS_CC_CHARGE:
                 # For charge, capacity increases
-                capacity_mask = (cap >= capacity_35_percent) & (cap <= capacity_65_percent)
+                capacity_mask = (cap >= capacity_25_percent) & (cap <= capacity_75_percent)
             else:
                 # For discharge, capacity increases but we want the middle region
-                capacity_mask = (cap >= capacity_35_percent) & (cap <= capacity_65_percent)
+                capacity_mask = (cap >= capacity_25_percent) & (cap <= capacity_75_percent)
 
             capacity_indices = np.where(capacity_mask)[0]
 
@@ -996,19 +1038,58 @@ class DQDVAnalysis:
                     # Select the peak with maximum absolute derivative value
                     best_peak_idx = peaks[np.argmax(np.abs(sub_dv[peaks]))]
 
-                    # Get inflection point values
+                use_fallback = (len(peaks) == 0) or (len(peaks) == 1)
+
+                if use_fallback:
+                    # Second-derivative fallback for monotonic dV/dQ (e.g. high-rate cycles)
+                    # Heavy smoothing on dV/dQ before computing second derivative
+                    from scipy.signal import savgol_filter
+                    heavy_window = max(25, int(len(sub_dv) * 0.2))
+                    heavy_window = min(heavy_window, len(sub_dv))
+                    if heavy_window % 2 == 0:
+                        heavy_window += 1
+
+                    if len(sub_dv) > heavy_window:
+                        dv_heavy_smooth = savgol_filter(sub_dv, heavy_window, polyorder=2)
+                    else:
+                        dv_heavy_smooth = sub_dv
+
+                    d2v = np.gradient(dv_heavy_smooth, sub_cap)
+                    d2_trimmed = d2v[min_idx:max_idx]
+
+                    if status == STATUS_CC_DISCHARGE:
+                        fallback_local_idx = np.argmin(d2_trimmed)
+                    else:
+                        fallback_local_idx = np.argmax(d2_trimmed)
+
+                    fallback_idx = fallback_local_idx + min_idx
+                    fallback_voltage = sub_volt[fallback_idx]
+                    fallback_capacity = sub_cap[fallback_idx]
+
+                    if len(peaks) == 1:
+                        # Compare peak vs fallback — use fallback if they disagree by >0.1V
+                        peak_voltage = sub_volt[best_peak_idx]
+                        if abs(peak_voltage - fallback_voltage) > 0.1:
+                            result[f'{key_prefix}_inflection_voltage'] = float(fallback_voltage)
+                            result[f'{key_prefix}_inflection_capacity'] = float(fallback_capacity)
+                            logging.debug(f"Using d²V/dQ² fallback for {status}: {fallback_voltage:.3f}V (peak was {peak_voltage:.3f}V)")
+                        else:
+                            result[f'{key_prefix}_inflection_voltage'] = float(peak_voltage)
+                            result[f'{key_prefix}_inflection_capacity'] = float(sub_cap[best_peak_idx])
+                            logging.debug(f"Found {status} inflection at {peak_voltage:.3f}V (confirmed by d²V/dQ² fallback)")
+                    else:
+                        # No peaks at all — use fallback directly
+                        result[f'{key_prefix}_inflection_voltage'] = float(fallback_voltage)
+                        result[f'{key_prefix}_inflection_capacity'] = float(fallback_capacity)
+                        logging.debug(f"No peaks for {status}, using d²V/dQ² fallback: {fallback_voltage:.3f}V")
+                else:
+                    # Multiple peaks found — use best peak directly
                     inflection_voltage = sub_volt[best_peak_idx]
                     inflection_capacity = sub_cap[best_peak_idx]
-
-                    # Store result
                     result[f'{key_prefix}_inflection_voltage'] = float(inflection_voltage)
                     result[f'{key_prefix}_inflection_capacity'] = float(inflection_capacity)
-
                     logging.debug(
-                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh using capacity constraint (35-65%) + voltage range {voltage_range}")
-                else:
-                    logging.debug(f"No peaks found for {status} in cycle {cycle}, using fallback voltage 3.2V")
-                    result[f'{key_prefix}_inflection_voltage'] = 3.2
+                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh using capacity constraint (25-75%) + voltage range {voltage_range}")
 
             except Exception as e:
                 logging.debug(f"Error in peak detection for {status}: {e}, using fallback voltage 3.2V")
