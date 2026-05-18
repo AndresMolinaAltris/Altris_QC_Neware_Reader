@@ -562,7 +562,10 @@ class DQDVAnalysis:
                          charge_voltage_range=None,
                          discharge_voltage_range=None,
                          c_rate=None,
-                         discharge_c_rate=None):
+                         discharge_c_rate=None,
+                         inflection_method="dV/dQ",
+                         charge_transition_voltage=None,
+                         discharge_transition_voltage=None):
         """
         Extracts the capacities for the 1st and 2nd plateaus during charge and discharge.
 
@@ -604,11 +607,17 @@ class DQDVAnalysis:
             # Define default transition voltage
             default_transition_voltage = 3.2  # V
 
-            # If transition_voltage is not provided, try inflection point detection
-            if transition_voltage is None:
+            # New separate charge/discharge manual voltages take priority
+            # over the legacy single transition_voltage parameter
+            if charge_transition_voltage is not None or discharge_transition_voltage is not None:
+                charge_transition = charge_transition_voltage if charge_transition_voltage is not None else (transition_voltage if transition_voltage is not None else default_transition_voltage)
+                discharge_transition = discharge_transition_voltage if discharge_transition_voltage is not None else (transition_voltage if transition_voltage is not None else default_transition_voltage)
+                logging.debug(f"Using separate manual voltages: charge={charge_transition:.4f}V, discharge={discharge_transition:.4f}V")
+            # Legacy: If transition_voltage is not provided, try inflection point detection
+            elif transition_voltage is None:
                 # Try to find inflection points using new method with separate voltage ranges
                 with tlog(f"DQDVAnalysis.find_inflection_point cycle={cycle}"):
-                    inflection_result = self.find_inflection_point(df, cycle, charge_voltage_range, discharge_voltage_range)
+                    inflection_result = self.find_inflection_point(df, cycle, charge_voltage_range, discharge_voltage_range, inflection_method=inflection_method)
 
                 if inflection_result:
                     # Use inflection points if available
@@ -817,7 +826,9 @@ class DQDVAnalysis:
                                selected_cycles=None,
                                charge_voltage_range=None,
                                discharge_voltage_range=None,
-                               c_rates=None):
+                               c_rates=None,
+                               inflection_method="dV/dQ",
+                               manual_voltages=None):
         """
         Extract plateau capacity statistics from DataLoader cache for multiple files and cycles.
 
@@ -886,12 +897,26 @@ class DQDVAnalysis:
                     logging.debug(f"extract_plateaus_batch: c_rate={charge_c_rate}, discharge_c_rate={discharge_c_rate} for {filename_stem}, cycle {cycle}")
 
                     # Extract plateau capacities with per-cycle C-rates
+                    manual_tv = manual_voltages.get(cycle) if manual_voltages else None
+                    # Unpack tuple (charge_tv, discharge_tv) or treat as legacy single float
+                    charge_tv_manual = None
+                    discharge_tv_manual = None
+                    legacy_tv = None
+                    if manual_tv is not None:
+                        if isinstance(manual_tv, tuple):
+                            charge_tv_manual, discharge_tv_manual = manual_tv
+                        else:
+                            legacy_tv = manual_tv
                     with tlog(f"DQDVAnalysis.extract_plateaus cycle={cycle}"):
                         plateau_data = self.extract_plateaus(df, cycle, mass,
                                                              charge_voltage_range=charge_voltage_range,
                                                              discharge_voltage_range=discharge_voltage_range,
                                                              c_rate=charge_c_rate,
-                                                             discharge_c_rate=discharge_c_rate)
+                                                             discharge_c_rate=discharge_c_rate,
+                                                             inflection_method=inflection_method,
+                                                             transition_voltage=legacy_tv,
+                                                             charge_transition_voltage=charge_tv_manual,
+                                                             discharge_transition_voltage=discharge_tv_manual)
 
                     if plateau_data:
                         # Add file and cycle information
@@ -915,7 +940,8 @@ class DQDVAnalysis:
                               df,
                               cycle,
                               charge_voltage_range=(2.5, 3.5),
-                              discharge_voltage_range=(2.5, 3.5)):
+                              discharge_voltage_range=(2.5, 3.5),
+                              inflection_method="dV/dQ"):
         """
         Find inflection point using dV/dQ gradient analysis with peak detection.
         Uses capacity constraints (25-75% of total capacity) followed by voltage range filtering.
@@ -1023,22 +1049,29 @@ class DQDVAnalysis:
 
             # Find peaks in derivative
             try:
-                if status == STATUS_CC_CHARGE:
-                    # For charge, find positive peaks in dV/dQ
-                    from scipy.signal import find_peaks
-                    peaks, _ = find_peaks(sub_dv[min_idx:max_idx])
+                use_d2v = (inflection_method == "d²V/dQ²")
+
+                if not use_d2v:
+                    if status == STATUS_CC_CHARGE:
+                        # For charge, find positive peaks in dV/dQ
+                        from scipy.signal import find_peaks
+                        peaks, _ = find_peaks(sub_dv[min_idx:max_idx])
+                    else:
+                        # For discharge, find negative peaks (invert signal)
+                        from scipy.signal import find_peaks
+                        peaks, _ = find_peaks(-sub_dv[min_idx:max_idx])
+
+                    if len(peaks) > 0:
+                        # Adjust peak indices to original array
+                        peaks += min_idx
+
+                        # Select the peak with maximum absolute derivative value
+                        best_peak_idx = peaks[np.argmax(np.abs(sub_dv[peaks]))]
+
+                    use_fallback = (len(peaks) == 0) or (len(peaks) == 1)
                 else:
-                    # For discharge, find negative peaks (invert signal)
-                    peaks, _ = find_peaks(-sub_dv[min_idx:max_idx])
-
-                if len(peaks) > 0:
-                    # Adjust peak indices to original array
-                    peaks += min_idx
-
-                    # Select the peak with maximum absolute derivative value
-                    best_peak_idx = peaks[np.argmax(np.abs(sub_dv[peaks]))]
-
-                use_fallback = (len(peaks) == 0) or (len(peaks) == 1)
+                    use_fallback = True
+                    peaks = []
 
                 if use_fallback:
                     # Second-derivative fallback for monotonic dV/dQ (e.g. high-rate cycles)

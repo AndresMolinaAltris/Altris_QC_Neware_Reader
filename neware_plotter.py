@@ -369,7 +369,8 @@ class NewarePlotter:
 
             # Set axis limits if we have data
             if has_data_for_cycle:
-                ax.set_xlim(2.75, 3.6) # I extended the voltage limit for plotting so I could plot full cell dqdv
+                #ax.set_xlim(2.75, 3.6) # I extended the voltage limit for plotting so I could plot full cell dqdv
+                ax.set_xlim(1.9, 3.6) # I extended the voltage limit for plotting so I could plot full cell dqdv
                 # Ensure we don't have zero division issues
                 if max_charge_dqdv > 0 or min_discharge_dqdv < 0:
                     max_y = max(0.1, max_charge_dqdv * 1.1)  # Always at least 0.1 for non-zero scale
@@ -406,7 +407,7 @@ class NewarePlotter:
 
     def plot_dqdv_curves_with_loader(self, data_loader, file_paths, dqdv_data=None,
                                      display_plot=False, gui_callback=None, selected_cycles=None,
-                                     show_transition_markers=True):
+                                     show_transition_markers=True, plateau_stats=None):
         """
         Process multiple NDAX files using DataLoader and create a combined dQ/dV plot.
 
@@ -443,10 +444,14 @@ class NewarePlotter:
 
         # Generate transition voltage data for markers (only when requested)
         if show_transition_markers:
-            self._transition_voltages = self._extract_transition_voltages_from_dqdv_data(
-                data_loader, file_paths, cycles
-            )
-            logging.debug(f"Generated {len(self._transition_voltages)} transition voltage entries for markers")
+            if plateau_stats:
+                self._transition_voltages = plateau_stats
+                logging.debug(f"Using {len(self._transition_voltages)} pre-computed transition voltage entries for markers")
+            else:
+                self._transition_voltages = self._extract_transition_voltages_from_dqdv_data(
+                    data_loader, file_paths, cycles
+                )
+                logging.debug(f"Generated {len(self._transition_voltages)} transition voltage entries for markers")
         else:
             self._transition_voltages = []
             logging.debug("Transition markers disabled for this plot")
@@ -649,13 +654,14 @@ class NewarePlotter:
                     continue
 
                 try:
-                    # Calculate C-rate for this cycle to resolve voltage ranges dynamically
-                    c_rate = DQDVAnalysis._calculate_crate_for_cycle(df, cycle, mass)
+                    # Calculate separate charge/discharge C-rates for voltage range resolution
+                    charge_c_rate, discharge_c_rate = DQDVAnalysis._calculate_crates_for_cycle(df, cycle, mass)
 
                     # Extract plateau data with C-rate dependent voltage ranges
                     plateau_data = dqdv_analyzer.extract_plateaus(
                         df, cycle, mass,
-                        c_rate=c_rate
+                        c_rate=charge_c_rate,
+                        discharge_c_rate=discharge_c_rate
                     )
 
                     if plateau_data:

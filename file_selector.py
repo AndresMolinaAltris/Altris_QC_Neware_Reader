@@ -135,6 +135,8 @@ class FileSelector:
             # Update table columns if they changed
             if previous_cycles != self.selected_cycles:
                 self._update_table_columns()
+                if self.inflection_method_var.get() == "Manual":
+                    self._rebuild_manual_tv_entries()
 
             # If files are already selected, reprocess to update the plots
             if self.selected_files:
@@ -162,6 +164,7 @@ class FileSelector:
         self._complete_analysis_data: list = []  # last consolidated_data from _consolidate_all_metrics
         self._data_loader = None  # DataLoader kept alive after Process Files
         self._last_features_df = None  # Last features DataFrame for mass editing
+        self._last_plateau_stats = None  # Last auto-detected plateau stats for manual TV pre-population
         self._mass_entries: dict = {}  # {cell_id: tk.StringVar} for mass panel
 
         # Configure grid layout
@@ -405,8 +408,31 @@ class FileSelector:
 
             # Process all cycles, passing the already-loaded DataLoader to avoid a second load
             logging.debug("FILE_SELECTOR. Starting complete analysis generation")
+            inflection_method = self.inflection_method_var.get()
+            manual_voltages = None
+            if inflection_method == "Manual":
+                manual_voltages = {}
+                for cycle, entry in self._manual_tv_entries.items():
+                    if isinstance(entry, tuple):
+                        charge_var, discharge_var = entry
+                        try:
+                            ch_v = float(charge_var.get())
+                        except ValueError:
+                            ch_v = 3.2
+                        try:
+                            dch_v = float(discharge_var.get())
+                        except ValueError:
+                            dch_v = 3.2
+                        manual_voltages[cycle] = (ch_v, dch_v)
+                    else:
+                        try:
+                            manual_voltages[cycle] = float(entry.get())
+                        except ValueError:
+                            manual_voltages[cycle] = 3.2
             complete_features_df, complete_dqdv_stats = process_all_cycles_for_complete_analysis(
-                self.selected_files, db, data_loader=self._raw_data_loader
+                self.selected_files, db, data_loader=self._raw_data_loader,
+                inflection_method=inflection_method,
+                manual_voltages=manual_voltages
             )
 
             if not complete_features_df.empty:
@@ -1101,7 +1127,8 @@ class FileSelector:
         # Configure the grid for the dQ/dV tab
         dqdv_tab.columnconfigure(0, weight=1)
         dqdv_tab.rowconfigure(0, weight=0)  # Button row
-        dqdv_tab.rowconfigure(1, weight=3)  # Main plot area (larger)
+        dqdv_tab.rowconfigure(1, weight=0)  # Manual voltage entries (collapsible)
+        dqdv_tab.rowconfigure(2, weight=3)  # Main plot area (larger)
 
         # On-demand calculation button frame
         btn_frame = ttk.Frame(dqdv_tab)
@@ -1119,9 +1146,24 @@ class FileSelector:
         )
         self.calc_tv_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
+        ttk.Label(btn_frame, text="Method:").pack(side=tk.LEFT, padx=(10, 0), pady=5)
+        self.inflection_method_var = tk.StringVar(value="dV/dQ")
+        self.inflection_method_combo = ttk.Combobox(
+            btn_frame, textvariable=self.inflection_method_var,
+            values=["dV/dQ", "d²V/dQ²", "Manual"], state="readonly", width=10
+        )
+        self.inflection_method_combo.pack(side=tk.LEFT, padx=5, pady=5)
+        self.inflection_method_combo.bind("<<ComboboxSelected>>", self._on_inflection_method_changed)
+
+        # Manual transition voltage entry frame (hidden by default)
+        self._manual_tv_frame = ttk.LabelFrame(dqdv_tab, text="Manual Transition Voltages")
+        self._manual_tv_entries: dict[int, tk.StringVar] = {}
+        self._manual_tv_inner = ttk.Frame(self._manual_tv_frame)
+        self._manual_tv_inner.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
         # Create plot area
         plot_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Plot Preview")
-        plot_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        plot_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
 
         # Create a container frame with fixed height for the save button
         self.dqdv_button_container = ttk.Frame(plot_frame, height=40)
@@ -1152,8 +1194,8 @@ class FileSelector:
 
         # Create statistics area
         stats_frame = ttk.LabelFrame(dqdv_tab, text="dQ/dV Statistics")
-        stats_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
-        dqdv_tab.rowconfigure(2, weight=1)  # Stats area
+        stats_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=5)
+        dqdv_tab.rowconfigure(3, weight=1)  # Stats area
 
         # Use grid layout for better control in the stats frame
         stats_frame.columnconfigure(0, weight=1)  # For table area
@@ -1695,6 +1737,47 @@ class FileSelector:
         finally:
             self.calc_dqdv_btn.config(state="normal")
 
+    def _on_inflection_method_changed(self, event=None):
+        """Show/hide the manual transition voltage entry frame."""
+        if self.inflection_method_var.get() == "Manual":
+            self._rebuild_manual_tv_entries()
+            self._manual_tv_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(2, 0))
+        else:
+            self._manual_tv_frame.grid_remove()
+
+    def _rebuild_manual_tv_entries(self):
+        """Rebuild manual voltage entry rows from selected_cycles with charge/discharge columns."""
+        # Clear existing widgets
+        for widget in self._manual_tv_inner.winfo_children():
+            widget.destroy()
+        self._manual_tv_entries.clear()
+
+        # Header row
+        ttk.Label(self._manual_tv_inner, text="Cycle", width=8).grid(row=0, column=0, padx=5)
+        ttk.Label(self._manual_tv_inner, text="Charge TV (V)", width=14).grid(row=0, column=1, padx=5)
+        ttk.Label(self._manual_tv_inner, text="Discharge TV (V)", width=14).grid(row=0, column=2, padx=5)
+
+        # Build lookup from last plateau stats if available
+        auto_voltages = {}  # {cycle: (charge_v, discharge_v)}
+        if hasattr(self, '_last_plateau_stats') and self._last_plateau_stats:
+            for stat in self._last_plateau_stats:
+                c = stat.get("Cycle")
+                if c is not None:
+                    ch = stat.get("Charge Transition Voltage (V)", 3.2)
+                    dch = stat.get("Discharge Transition Voltage (V)", 3.2)
+                    # Keep the first occurrence per cycle (or could average across cells)
+                    if c not in auto_voltages:
+                        auto_voltages[c] = (ch, dch)
+
+        for i, cycle in enumerate(self.selected_cycles):
+            ttk.Label(self._manual_tv_inner, text=str(cycle), width=8).grid(row=i + 1, column=0, padx=5, pady=2)
+            default_ch, default_dch = auto_voltages.get(cycle, (3.2, 3.2))
+            charge_var = tk.StringVar(value=str(round(default_ch, 4)))
+            discharge_var = tk.StringVar(value=str(round(default_dch, 4)))
+            self._manual_tv_entries[cycle] = (charge_var, discharge_var)
+            ttk.Entry(self._manual_tv_inner, textvariable=charge_var, width=14).grid(row=i + 1, column=1, padx=5, pady=2)
+            ttk.Entry(self._manual_tv_inner, textvariable=discharge_var, width=14).grid(row=i + 1, column=2, padx=5, pady=2)
+
     def _on_calculate_transition_voltage(self):
         """Calculate transition voltages on demand and update the stats treeview."""
         from main import compute_transition_voltages
@@ -1710,9 +1793,34 @@ class FileSelector:
         try:
             from neware_plotter import NewarePlotter
             db = CellDatabase.get_instance()
+            inflection_method = self.inflection_method_var.get()
+            manual_voltages = None
+            if inflection_method == "Manual":
+                manual_voltages = {}
+                for cycle, entry in self._manual_tv_entries.items():
+                    if isinstance(entry, tuple):
+                        charge_var, discharge_var = entry
+                        try:
+                            ch_v = float(charge_var.get())
+                        except ValueError:
+                            ch_v = 3.2
+                        try:
+                            dch_v = float(discharge_var.get())
+                        except ValueError:
+                            dch_v = 3.2
+                        manual_voltages[cycle] = (ch_v, dch_v)
+                    else:
+                        # Legacy single StringVar
+                        try:
+                            manual_voltages[cycle] = float(entry.get())
+                        except ValueError:
+                            manual_voltages[cycle] = 3.2
             plateau_stats = compute_transition_voltages(
-                self.selected_files, db, self.selected_cycles, self._data_loader
+                self.selected_files, db, self.selected_cycles, self._data_loader,
+                inflection_method=inflection_method,
+                manual_voltages=manual_voltages
             )
+            self._last_plateau_stats = plateau_stats
             # Re-generate dQ/dV plot with transition markers shown
             dqdv_data = getattr(self, '_last_dqdv_data', None)
             new_fig = NewarePlotter(db).plot_dqdv_curves_with_loader(
@@ -1720,7 +1828,8 @@ class FileSelector:
                 dqdv_data=dqdv_data,
                 display_plot=False,
                 selected_cycles=self.selected_cycles,
-                show_transition_markers=True
+                show_transition_markers=True,
+                plateau_stats=plateau_stats
             )
             # Update plot (with markers) and populate stats table
             self.update_dqdv_plot(new_fig if new_fig else None, plateau_stats)

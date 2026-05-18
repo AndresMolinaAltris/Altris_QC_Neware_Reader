@@ -45,7 +45,8 @@ logging.debug(f"[TIMING] program_startup | duration={_startup_elapsed:.3f}s | el
 
 
 def _extract_features_from_files(data_loader, ndax_file_list, db, cycles_to_process=None,
-                                  extract_dqdv_curves=False, extract_plateau_stats=False):
+                                  extract_dqdv_curves=False, extract_plateau_stats=False,
+                                  inflection_method="dV/dQ", manual_voltages=None):
     """
     Core feature extraction logic shared by processing functions.
 
@@ -139,9 +140,19 @@ def _extract_features_from_files(data_loader, ndax_file_list, db, cycles_to_proc
 
                 # Extract plateau statistics if requested
                 if extract_plateau_stats:
-                    c_rate = DQDVAnalysis._calculate_crate_for_cycle(df, cycle, mass)
+                    charge_c_rate, discharge_c_rate = DQDVAnalysis._calculate_crates_for_cycle(df, cycle, mass)
+                    manual_tv = manual_voltages.get(cycle) if manual_voltages else None
+                    # Unpack tuple (charge_tv, discharge_tv) or treat as legacy single float
+                    charge_tv_manual = None
+                    discharge_tv_manual = None
+                    legacy_tv = None
+                    if manual_tv is not None:
+                        if isinstance(manual_tv, tuple):
+                            charge_tv_manual, discharge_tv_manual = manual_tv
+                        else:
+                            legacy_tv = manual_tv
                     with tlog(f"DQDVAnalysis.extract_plateaus cycle={cycle}"):
-                        plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass, c_rate=c_rate)
+                        plateau_data = dqdvanalysis_obj.extract_plateaus(df, cycle, mass, c_rate=charge_c_rate, discharge_c_rate=discharge_c_rate, inflection_method=inflection_method, transition_voltage=legacy_tv, charge_transition_voltage=charge_tv_manual, discharge_transition_voltage=discharge_tv_manual)
                     if plateau_data:
                         plateau_data["File"] = cell_ID
                         plateau_data["Cycle"] = cycle
@@ -266,7 +277,9 @@ def process_files(ndax_file_list,
 
 def process_all_cycles_for_complete_analysis(ndax_file_list,
                                              db,
-                                             data_loader=None):
+                                             data_loader=None,
+                                             inflection_method="dV/dQ",
+                                             manual_voltages=None):
     """
     Process all cycles from all files for complete analysis.
     Extracts both basic features and dQ/dV data for all available cycles.
@@ -292,7 +305,9 @@ def process_all_cycles_for_complete_analysis(ndax_file_list,
         data_loader, ndax_file_list, db,
         cycles_to_process=None,  # Process all available cycles
         extract_dqdv_curves=False,
-        extract_plateau_stats=True
+        extract_plateau_stats=True,
+        inflection_method=inflection_method,
+        manual_voltages=manual_voltages
     )
 
     # Only clear cache if we created the loader ourselves
@@ -352,7 +367,8 @@ def compute_dqdv(ndax_file_list, db, selected_cycles, data_loader):
     return dqdv_fig, dqdv_data
 
 
-def compute_transition_voltages(ndax_file_list, db, selected_cycles, data_loader):
+def compute_transition_voltages(ndax_file_list, db, selected_cycles, data_loader,
+                                inflection_method="dV/dQ", manual_voltages=None):
     """
     Compute plateau/transition voltage statistics on demand.
 
@@ -361,6 +377,7 @@ def compute_transition_voltages(ndax_file_list, db, selected_cycles, data_loader
         db: CellDatabase instance
         selected_cycles: List of cycle numbers to analyse
         data_loader: Pre-loaded DataLoader
+        manual_voltages: Optional dict mapping cycle number to manual transition voltage
 
     Returns:
         List of plateau statistics dicts
@@ -369,7 +386,9 @@ def compute_transition_voltages(ndax_file_list, db, selected_cycles, data_loader
     dqdv_analyzer = DQDVAnalysis("plateau_extractor")
     with tlog(f"extract_plateaus_batch n_files={len(ndax_file_list)} n_cycles={len(selected_cycles)}"):
         plateau_stats = dqdv_analyzer.extract_plateaus_batch(
-            data_loader, db, ndax_file_list, selected_cycles
+            data_loader, db, ndax_file_list, selected_cycles,
+            inflection_method=inflection_method,
+            manual_voltages=manual_voltages
         )
     logging.debug(f"MAIN.compute_transition_voltages finished: {len(plateau_stats)} entries")
     return plateau_stats
