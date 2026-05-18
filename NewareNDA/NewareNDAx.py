@@ -51,6 +51,7 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
 
         # Read active mass
         active_mass = None
+        step_xml_root = None
         try:
             step_xml_path = zf.extract('Step.xml', path=tmpdir)
             with open(step_xml_path, 'r', encoding='gb2312') as f:
@@ -121,17 +122,34 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
         # Check if data_runInfo.ndc and data_step.ndc exist
         if all(i in zf.namelist() for i in ['data_runInfo.ndc', 'data_step.ndc']):
 
-            # Read data from separate files
+            # Read runInfo (time, capacity, energy, step, index)
             runInfo_file = zf.extract('data_runInfo.ndc', path=tmpdir)
-            step_file = zf.extract('data_step.ndc', path=tmpdir)
             runInfo_df = read_ndc(runInfo_file)
-            step_df = read_ndc(step_file)
+
+            # Build step→status mapping from Step.xml (binary data_step.ndc format
+            # is not reliably parseable across firmware versions)
+            step_df = None
+            if step_xml_root is not None:
+                step_info_node = step_xml_root.find('.//Step_Info')
+                if step_info_node is not None:
+                    rows = [{'Step': int(s.attrib['Step_ID']),
+                             'Status': state_dict.get(int(s.attrib['Step_Type']),
+                                                      f"Unknown_{s.attrib['Step_Type']}")}
+                            for s in step_info_node
+                            if 'Step_ID' in s.attrib and 'Step_Type' in s.attrib]
+                    if rows:
+                        step_df = pd.DataFrame(rows)
+
+            if step_df is None:
+                step_file = zf.extract('data_step.ndc', path=tmpdir)
+                step_df = read_ndc(step_file)
 
             # Merge dataframes
             data_df = data_df.merge(runInfo_df, how='left', on='Index')
             data_df['Step'] = data_df['Step'].ffill()
+            non_cycle_columns = [c for c in rec_columns if c != 'Cycle']
             data_df = data_df.merge(step_df, how='left', on='Step').reindex(
-                columns=rec_columns)
+                columns=non_cycle_columns)
 
             # Fill in missing data - Neware appears to fabricate data
             if data_df.isnull().any(axis=None):
@@ -169,7 +187,7 @@ def read_ndax(file, software_cycle_number=False, cycle_mode='chg'):
     if active_mass is not None:
         data_df.attrs['active_mass'] = active_mass
 
-    return data_df.astype(dtype=dtype_dict)
+    return data_df.astype(dtype={k: v for k, v in dtype_dict.items() if k in data_df.columns})
 
 
 def _data_interpolation(df):
@@ -387,7 +405,7 @@ def _read_ndc_11_filetype_5(mm):
 
 
 def _read_ndc_11_filetype_7(mm):
-    return _read_ndc_11_filetype_7(mm)
+    raise NotImplementedError("ndc version 11 filetype 7 binary parsing not implemented; step info is read from Step.xml instead")
 
 
 def _read_ndc_11_filetype_18(mm):
@@ -400,7 +418,7 @@ def _read_ndc_11_filetype_18(mm):
     mm.seek(header)
     while mm.tell() < mm_size:
         bytes = mm.read(record_len)
-        for i in struct.iter_unpack('<isffff12siii2s', bytes[132:-56]):
+        for i in struct.iter_unpack('<isffff12siii2s', bytes[132:-63]):
             Time = i[0]
             [Charge_Capacity, Discharge_Capacity] = [i[2], i[3]]
             [Charge_Energy, Discharge_Energy] = [i[4], i[5]]
