@@ -5,12 +5,12 @@ import pytest
 
 
 def test_crate_from_features_matches_expected(loaded_df, sample_ndax_path):
-    """C-rate from DQDVAnalysis._calculate_crate_for_cycle should be ~0.1 for formation files."""
+    """_calculate_crate_for_cycle returns ~0.1 for formation current with realistic cell mass."""
     from features import DQDVAnalysis
     cycle = int(loaded_df["Cycle"].iloc[0])
-    mass = loaded_df.attrs.get("active_mass") or 0.025
+    # read_ndax does not populate attrs["active_mass"]; use a realistic 1Ah Na-ion cell mass
+    mass = loaded_df.attrs.get("active_mass") or 6.7
     c_rate = DQDVAnalysis._calculate_crate_for_cycle(loaded_df, cycle, mass)
-    # Formation files should be around 0.1C (allow up to 0.5C for tolerance)
     if c_rate is not None:
         assert c_rate <= 0.5, f"Expected formation C-rate ~0.1, got {c_rate}"
 

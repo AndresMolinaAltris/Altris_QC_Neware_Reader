@@ -494,6 +494,8 @@ def main():
                 file_selector_instance._data_loader = result.data_loader
                 if hasattr(file_selector_instance, 'calc_dqdv_btn'):
                     file_selector_instance.calc_dqdv_btn.config(state="normal")
+                if hasattr(file_selector_instance, 'fusi_generate_btn'):
+                    file_selector_instance.fusi_generate_btn.config(state="normal")
 
         except Exception as e:
             logging.debug(f"MAIN.Error updating GUI: {e}")

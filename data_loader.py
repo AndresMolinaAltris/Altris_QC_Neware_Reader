@@ -114,24 +114,6 @@ class DataLoader:
 
         return self._cache[file_path].copy() if copy else self._cache[file_path]
 
-    def get_data_by_stem(self, filename_stem: str) -> Optional[pd.DataFrame]:
-        """
-        Get cached data by filename stem (without path and extension).
-
-        Args:
-            filename_stem: Filename without path and extension (e.g., "sample_001")
-
-        Returns:
-            DataFrame containing the file data, or None if not found
-        """
-        # Find the full path that matches this stem
-        for full_path, stem in self._file_stems.items():
-            if stem == filename_stem:
-                return self.get_data(full_path)
-
-        logging.warning(f"DATA_LOADER: No file found with stem: {filename_stem}")
-        return None
-
     def is_loaded(self, file_path: str) -> bool:
         """
         Check if a file is loaded in cache.
@@ -152,15 +134,6 @@ class DataLoader:
             List of full file paths that are currently cached
         """
         return list(self._cache.keys())
-
-    def get_cached_stems(self) -> List[str]:
-        """
-        Get list of all cached filename stems.
-
-        Returns:
-            List of filename stems that are currently cached
-        """
-        return list(self._file_stems.values())
 
     def get_failed_files(self) -> List[str]:
         """

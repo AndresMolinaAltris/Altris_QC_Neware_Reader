@@ -266,41 +266,11 @@ class CellDatabase:
             return entry[0]  # (mass, loading)
         return entry
     
-    def get_loading_level(self, cell_id):
-        """
-        Separate function to retrieve only the loading level (mg/cm²).
-        Returns float if found, None if missing or database not loaded.
-        """
-        if not self._is_loaded:
-            return None
-
-        cell_id_str = str(cell_id).strip()
-        entry = self.mass_data.get(cell_id_str)
-
-        # Case-insensitive fallback using pre-built mapping (O(1))
-        if entry is None:
-            actual_key = self._lowercase_keys.get(cell_id_str.lower())
-            if actual_key:
-                entry = self.mass_data[actual_key]
-
-        if entry is None:
-            return None
-
-        # entry is a tuple: (mass_g, loading_mg_per_cm2) or just mass_g in old files
-        if isinstance(entry, tuple) and len(entry) == 2:
-            return entry[1] if entry[1] is not None else None
-        return None
-
     def clear_cache(self):
         """Clear the cached data"""
         self.mass_data = {}
         self._lowercase_keys = {}
         self._is_loaded = False
-
-    def rebuild_cache(self, excel_path):
-        """Force rebuild the cache from the Excel file"""
-        self.clear_cache()
-        self.load_database(excel_path, force_reload=True)
 
 
 # Convenience function for finding active mass

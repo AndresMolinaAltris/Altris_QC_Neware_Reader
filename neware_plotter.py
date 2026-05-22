@@ -53,42 +53,6 @@ class NewarePlotter:
 
         return sample_name
 
-    def preprocess_ndax_file_with_loader(self, data_loader, file_path, selected_cycles=None):
-        """
-        Updated version of preprocess_ndax_file that uses DataLoader instead of reading files.
-
-        Args:
-            data_loader: DataLoader instance with cached data
-            file_path: Path to the NDAX file
-            selected_cycles: List of cycles to process
-
-        Returns:
-            tuple: (filename_stem, processed_data) or (None, None) if failed
-        """
-        logging.debug("NEWARE_PLOTTER.preprocess_ndax_file_with_loader func started.")
-
-        # Use default cycles if none provided
-        cycles = selected_cycles if selected_cycles else DEFAULT_CYCLES
-
-        # Check if file is loaded
-        if not data_loader.is_loaded(file_path):
-            logging.debug(f"NEWARE_PLOTTER.File not loaded in DataLoader: {os.path.basename(file_path)}")
-            return None, None
-
-        # Get cached data
-        df = data_loader.get_data(file_path)
-        if df is None:
-            logging.debug(f"NEWARE_PLOTTER.No data available from DataLoader: {os.path.basename(file_path)}")
-            return None, None
-
-        filename_stem = os.path.basename(file_path).split(".")[0]
-
-        # Prepare plot data
-        plot_data = self._prepare_plot_data_from_dataframe(df, filename_stem, cycles)
-
-        logging.debug("NEWARE_PLOTTER.preprocess_ndax_file_with_loader func finished.")
-        return filename_stem, plot_data
-
     def create_plot(self, files_data, selected_cycles=None, display_plot=False):
         """
         Creates plots for the specified files and cycles with optimized legend placement.

@@ -72,87 +72,59 @@ class Features:
 
             return pd.DataFrame(features, index=[0])
 
-    def extract_internal_resistance_soc_0(self, df, features, cycle):
-        label = "Internal Resistance at SOC 0 (Ohms)"
+    def _extract_internal_resistance(self, df, features, cycle, rest_after):
+        """Shared IR extraction logic. rest_after: 'charge' (SOC 100) or 'discharge' (SOC 0)."""
+        label = (
+            "Internal Resistance at SOC 100 (Ohms)"
+            if rest_after == 'charge'
+            else "Internal Resistance at SOC 0 (Ohms)"
+        )
         try:
             cycle = int(cycle)
             cycle_data = df[df["Cycle"] == cycle].copy()
             if cycle_data.empty:
-                features[label] = np.nan;
+                features[label] = np.nan
                 return
             cycle_data = cycle_data.sort_index()
 
-            if cycle == 1:
+            if rest_after == 'discharge' and cycle == 1:
                 idx = (df[COL_CYCLE] == 1) & (df[COL_STEP] == 1) & (df[COL_STATUS] == STATUS_REST)
             else:
                 prev = cycle_data[COL_STATUS].shift(1)
-                rest_mask = (cycle_data[COL_STATUS] == STATUS_REST) & (prev.isin(DISCHARGE_STATUSES))
+                preceding = CHARGE_STATUSES if rest_after == 'charge' else DISCHARGE_STATUSES
+                rest_mask = (cycle_data[COL_STATUS] == STATUS_REST) & (prev.isin(preceding))
                 rest_steps_series = cycle_data.loc[rest_mask, COL_STEP]
                 if rest_steps_series.empty:
-                    features[label] = np.nan;
+                    features[label] = np.nan
                     return
                 target_step = rest_steps_series.iloc[-1]
                 idx = (df[COL_CYCLE] == cycle) & (df[COL_STEP] == target_step) & (df[COL_STATUS] == STATUS_REST)
 
             if not idx.any():
-                features[label] = np.nan;
+                features[label] = np.nan
                 return
             index = df[idx].index[-1]
             pos = df.index.get_loc(index)
             if pos + 1 >= len(df):
-                features[label] = np.nan;
+                features[label] = np.nan
                 return
 
             ocv = float(df[COL_VOLTAGE].iloc[pos])
             ocv_dV = float(df[COL_VOLTAGE].iloc[pos + 1])
             delta_current = abs(float(df[COL_CURRENT].iloc[pos + 1]) - float(df[COL_CURRENT].iloc[pos]))
             if delta_current == 0:
-                features[label] = np.nan;
+                features[label] = np.nan
                 return
 
             features[label] = round(abs(ocv_dV - ocv) / (delta_current / 1000), 4)
         except Exception:
             features[label] = np.nan
+
+    def extract_internal_resistance_soc_0(self, df, features, cycle):
+        self._extract_internal_resistance(df, features, cycle, rest_after='discharge')
 
     def extract_internal_resistance_soc_100(self, df, features, cycle):
-        label = "Internal Resistance at SOC 100 (Ohms)"
-        try:
-            cycle = int(cycle)
-            cycle_data = df[df["Cycle"] == cycle].copy()
-            if cycle_data.empty:
-                features[label] = np.nan;
-                return
-            cycle_data = cycle_data.sort_index()
-
-            prev = cycle_data[COL_STATUS].shift(1)
-            rest_mask = (cycle_data[COL_STATUS] == STATUS_REST) & (prev.isin(CHARGE_STATUSES))
-            rest_steps_series = cycle_data.loc[rest_mask, COL_STEP]
-            if rest_steps_series.empty:
-                features[label] = np.nan;
-                return
-
-            target_step = rest_steps_series.iloc[-1]
-            idx = (df[COL_CYCLE] == cycle) & (df[COL_STEP] == target_step) & (df[COL_STATUS] == STATUS_REST)
-            if not idx.any():
-                features[label] = np.nan;
-                return
-
-            index = df[idx].index[-1]
-            pos = df.index.get_loc(index)
-            if pos + 1 >= len(df):
-                features[label] = np.nan;
-                return
-
-            ocv = float(df[COL_VOLTAGE].iloc[pos])
-            ocv_dV = float(df[COL_VOLTAGE].iloc[pos + 1])
-            delta_current = abs(float(df[COL_CURRENT].iloc[pos + 1]) - float(df[COL_CURRENT].iloc[pos]))
-            if delta_current == 0:
-                features[label] = np.nan;
-                return
-
-            features[label] = round(abs(ocv_dV - ocv) / (delta_current / 1000), 4)
-        except Exception:
-            features[label] = np.nan
+        self._extract_internal_resistance(df, features, cycle, rest_after='charge')
 
     def extract_charge_capacity(self, df, features, cycle, mass=1.0):
         """
@@ -280,7 +252,7 @@ class DQDVAnalysis:
         ranges = DQDVAnalysis.VOLTAGE_RANGES_BY_CRATE[nearest]
         logging.debug(f"DQDVAnalysis.get_voltage_ranges: c_rate={c_rate} -> nearest={nearest}, ranges={ranges}")
         return ranges
-
+    
     def _calculate_dqdv(self, data, direction, mass=1.0, smoothing_method='sma', window_length=15, weights=None,
                         pre_smooth=True):
 
@@ -740,35 +712,9 @@ class DQDVAnalysis:
 
     @staticmethod
     def _calculate_crate_for_cycle(df, cycle, active_mass_g):
-        """
-        Calculate C-rate for a specific cycle using charge current and active mass.
-
-        Args:
-            df: DataFrame with battery data
-            cycle: Cycle number to calculate C-rate for
-            active_mass_g: Active mass in grams
-
-        Returns:
-            Float representing C-rate, or None if calculation fails
-        """
-        if active_mass_g is None or active_mass_g <= 0:
-            return None
-
-        SPECIFIC_CAPACITY = 150  # mAh/g - hardcoded for cathode material
-
-        try:
-            charge_data = df[(df[COL_CYCLE] == cycle) & (df[COL_STATUS] == STATUS_CC_CHARGE)]
-            if not charge_data.empty:
-                charge_current = abs(charge_data[COL_CURRENT].mean())
-                nominal_capacity = active_mass_g * SPECIFIC_CAPACITY
-                raw_rate = charge_current / nominal_capacity if nominal_capacity > 0 else None
-                return DQDVAnalysis._snap_to_standard_rate(raw_rate)
-
-            return None
-
-        except Exception as e:
-            logging.debug(f"DQDVAnalysis: Error calculating C-rate for cycle {cycle}: {e}")
-            return None
+        """Return charge-only C-rate for a cycle (delegates to _calculate_crates_for_cycle)."""
+        charge_c_rate, _ = DQDVAnalysis._calculate_crates_for_cycle(df, cycle, active_mass_g)
+        return charge_c_rate
 
     @staticmethod
     def _calculate_crates_for_cycle(df, cycle, active_mass_g):
@@ -936,6 +882,113 @@ class DQDVAnalysis:
         logging.debug("DQDVAnalysis.extract_plateaus_batch finished")
         return stats
 
+    def _find_segment_inflection(self, seg_data, status, capacity_col, voltage_range, key_prefix, inflection_method):
+        """
+        Compute inflection voltage/capacity for a single charge or discharge segment.
+
+        Returns a dict with keys '{key_prefix}_inflection_voltage' (and optionally
+        '{key_prefix}_inflection_capacity'), or a dict with just the fallback voltage
+        when data is insufficient or peaks cannot be found.
+        """
+        from scipy.signal import find_peaks, savgol_filter
+
+        if status == STATUS_CC_CHARGE:
+            seg_data = seg_data.sort_values(COL_VOLTAGE, ascending=True)
+        else:
+            seg_data = seg_data.sort_values(COL_VOLTAGE, ascending=False)
+
+        volt = seg_data[COL_VOLTAGE].values
+        cap = seg_data[capacity_col].values
+
+        # Capacity constraint: keep 25–75% of total capacity change
+        total_cap_change = cap[-1] - cap[0]
+        cap_lo = cap[0] + 0.25 * total_cap_change
+        cap_hi = cap[0] + 0.75 * total_cap_change
+        cap_indices = np.where((cap >= cap_lo) & (cap <= cap_hi))[0]
+
+        if len(cap_indices) < 5:
+            logging.debug(f"Insufficient data after capacity constraint for {status}, using fallback voltage 3.2V")
+            return {f'{key_prefix}_inflection_voltage': 3.2}
+
+        cap_c = cap[cap_indices]
+        volt_c = volt[cap_indices]
+
+        dV_dQ = np.gradient(volt_c, cap_c)
+        win = min(15, len(dV_dQ))
+        dV_dQ_smooth = np.convolve(dV_dQ, np.ones(win) / win, mode='same') if win >= 3 else dV_dQ
+
+        # Voltage range filter
+        v_indices = np.where((volt_c >= voltage_range[0]) & (volt_c <= voltage_range[1]))[0]
+        if len(v_indices) < 5:
+            logging.debug(f"Insufficient data after voltage constraint for {status}, using fallback voltage 3.2V")
+            return {f'{key_prefix}_inflection_voltage': 3.2}
+
+        sub_dv = dV_dQ_smooth[v_indices]
+        sub_cap = cap_c[v_indices]
+        sub_volt = volt_c[v_indices]
+
+        # Edge exclusion: drop outer 5%
+        min_idx = max(0, int(len(sub_dv) * 0.05))
+        max_idx = min(len(sub_dv), int(len(sub_dv) * 0.95))
+        if max_idx <= min_idx + 2:
+            logging.debug(f"Insufficient data after edge exclusion for {status}, using fallback voltage 3.2V")
+            return {f'{key_prefix}_inflection_voltage': 3.2}
+
+        try:
+            use_d2v = (inflection_method == "d²V/dQ²")
+            peaks = []
+            best_peak_idx = None
+
+            if not use_d2v:
+                signal = sub_dv[min_idx:max_idx]
+                raw_peaks, _ = find_peaks(signal if status == STATUS_CC_CHARGE else -signal)
+                peaks = list(raw_peaks)
+                if peaks:
+                    peaks = [p + min_idx for p in peaks]
+                    best_peak_idx = peaks[np.argmax(np.abs(sub_dv[peaks]))]
+
+            use_fallback = use_d2v or len(peaks) == 0 or len(peaks) == 1
+
+            if use_fallback:
+                # d²V/dQ² fallback — robust for monotonic dV/dQ at high rates
+                heavy_win = max(25, int(len(sub_dv) * 0.2))
+                heavy_win = min(heavy_win, len(sub_dv))
+                if heavy_win % 2 == 0:
+                    heavy_win += 1
+                dv_smooth2 = savgol_filter(sub_dv, heavy_win, polyorder=2) if len(sub_dv) > heavy_win else sub_dv
+                d2v = np.gradient(dv_smooth2, sub_cap)
+                d2_trimmed = d2v[min_idx:max_idx]
+                fb_local = np.argmin(d2_trimmed) if status == STATUS_CC_DISCHARGE else np.argmax(d2_trimmed)
+                fb_idx = fb_local + min_idx
+                fb_volt = sub_volt[fb_idx]
+                fb_cap = sub_cap[fb_idx]
+
+                if len(peaks) == 1 and best_peak_idx is not None:
+                    pk_volt = sub_volt[best_peak_idx]
+                    if abs(pk_volt - fb_volt) > 0.1:
+                        logging.debug(f"Using d²V/dQ² fallback for {status}: {fb_volt:.3f}V (peak was {pk_volt:.3f}V)")
+                        return {f'{key_prefix}_inflection_voltage': float(fb_volt),
+                                f'{key_prefix}_inflection_capacity': float(fb_cap)}
+                    else:
+                        logging.debug(f"Found {status} inflection at {pk_volt:.3f}V (confirmed by d²V/dQ² fallback)")
+                        return {f'{key_prefix}_inflection_voltage': float(pk_volt),
+                                f'{key_prefix}_inflection_capacity': float(sub_cap[best_peak_idx])}
+                else:
+                    logging.debug(f"No peaks for {status}, using d²V/dQ² fallback: {fb_volt:.3f}V")
+                    return {f'{key_prefix}_inflection_voltage': float(fb_volt),
+                            f'{key_prefix}_inflection_capacity': float(fb_cap)}
+            else:
+                iv = sub_volt[best_peak_idx]
+                ic = sub_cap[best_peak_idx]
+                logging.debug(
+                    f"Found {status} inflection at {iv:.3f}V, {ic:.3f}mAh using capacity constraint (25-75%) + voltage range {voltage_range}")
+                return {f'{key_prefix}_inflection_voltage': float(iv),
+                        f'{key_prefix}_inflection_capacity': float(ic)}
+
+        except Exception as e:
+            logging.debug(f"Error in peak detection for {status}: {e}, using fallback voltage 3.2V")
+            return {f'{key_prefix}_inflection_voltage': 3.2}
+
     def find_inflection_point(self,
                               df,
                               cycle,
@@ -958,176 +1011,26 @@ class DQDVAnalysis:
         logging.debug(
             f"DQDVAnalysis.find_inflection_point started with charge_range: {charge_voltage_range}, discharge_range: {discharge_voltage_range}")
 
-        # Filter data for the specified cycle
         cycle_df = df[df[COL_CYCLE] == int(cycle)].copy()
-
         if cycle_df.empty:
             logging.debug(f"No data found for cycle {cycle}")
             return None
 
         result = {}
-
-        # Process charge and discharge separately with their respective voltage ranges
         processing_params = [
             (STATUS_CC_CHARGE, COL_CHARGE_CAPACITY, charge_voltage_range, 'charge'),
-            (STATUS_CC_DISCHARGE, COL_DISCHARGE_CAPACITY, discharge_voltage_range, 'discharge')
+            (STATUS_CC_DISCHARGE, COL_DISCHARGE_CAPACITY, discharge_voltage_range, 'discharge'),
         ]
 
         for status, capacity_col, voltage_range, key_prefix in processing_params:
             seg_data = cycle_df[cycle_df[COL_STATUS] == status].copy()
-
             if len(seg_data) < 10:
                 logging.debug(f"Insufficient data for {status} in cycle {cycle}")
                 continue
-
-            # Sort data appropriately
-            if status == STATUS_CC_CHARGE:
-                seg_data = seg_data.sort_values(COL_VOLTAGE, ascending=True)
-            else:
-                seg_data = seg_data.sort_values(COL_VOLTAGE, ascending=False)
-
-            # Get voltage and capacity arrays
-            volt = seg_data[COL_VOLTAGE].values
-            cap = seg_data[capacity_col].values
-
-            # STEP 1: Apply capacity constraint (25-75% of total capacity change)
-            total_capacity_change = cap[-1] - cap[0]
-            capacity_25_percent = cap[0] + 0.25 * total_capacity_change
-            capacity_75_percent = cap[0] + 0.75 * total_capacity_change
-
-            # Create capacity mask
-            if status == STATUS_CC_CHARGE:
-                # For charge, capacity increases
-                capacity_mask = (cap >= capacity_25_percent) & (cap <= capacity_75_percent)
-            else:
-                # For discharge, capacity increases but we want the middle region
-                capacity_mask = (cap >= capacity_25_percent) & (cap <= capacity_75_percent)
-
-            capacity_indices = np.where(capacity_mask)[0]
-
-            if len(capacity_indices) < 5:
-                logging.debug(f"Insufficient data after capacity constraint for {status}, using fallback voltage 3.2V")
-                result[f'{key_prefix}_inflection_voltage'] = 3.2
-                continue
-
-            # Apply capacity constraint to data
-            cap_constrained = cap[capacity_indices]
-            volt_constrained = volt[capacity_indices]
-
-            # Calculate dV/dQ derivative on capacity-constrained data
-            dV_dQ = np.gradient(volt_constrained, cap_constrained)
-
-            # Apply smoothing with 15-point moving average
-            smoothing_window = min(15, len(dV_dQ))
-            if smoothing_window >= 3:
-                dV_dQ_smooth = np.convolve(dV_dQ, np.ones(smoothing_window) / smoothing_window, mode='same')
-            else:
-                dV_dQ_smooth = dV_dQ
-
-            # STEP 2: Apply voltage range filter within capacity-constrained data
-            voltage_mask = (volt_constrained >= voltage_range[0]) & (volt_constrained <= voltage_range[1])
-            valid_indices = np.where(voltage_mask)[0]
-
-            if len(valid_indices) < 5:
-                logging.debug(f"Insufficient data after voltage constraint for {status}, using fallback voltage 3.2V")
-                result[f'{key_prefix}_inflection_voltage'] = 3.2
-                continue
-
-            # Extract data in both capacity and voltage ranges
-            sub_dv = dV_dQ_smooth[valid_indices]
-            sub_cap = cap_constrained[valid_indices]
-            sub_volt = volt_constrained[valid_indices]
-
-            # Exclude edges (5% from each end) of the final filtered data
-            min_idx = max(0, int(len(sub_dv) * 0.05))
-            max_idx = min(len(sub_dv), int(len(sub_dv) * 0.95))
-
-            if max_idx <= min_idx + 2:
-                logging.debug(f"Insufficient data after edge exclusion for {status}, using fallback voltage 3.2V")
-                result[f'{key_prefix}_inflection_voltage'] = 3.2
-                continue
-
-            # Find peaks in derivative
-            try:
-                use_d2v = (inflection_method == "d²V/dQ²")
-
-                if not use_d2v:
-                    if status == STATUS_CC_CHARGE:
-                        # For charge, find positive peaks in dV/dQ
-                        from scipy.signal import find_peaks
-                        peaks, _ = find_peaks(sub_dv[min_idx:max_idx])
-                    else:
-                        # For discharge, find negative peaks (invert signal)
-                        from scipy.signal import find_peaks
-                        peaks, _ = find_peaks(-sub_dv[min_idx:max_idx])
-
-                    if len(peaks) > 0:
-                        # Adjust peak indices to original array
-                        peaks += min_idx
-
-                        # Select the peak with maximum absolute derivative value
-                        best_peak_idx = peaks[np.argmax(np.abs(sub_dv[peaks]))]
-
-                    use_fallback = (len(peaks) == 0) or (len(peaks) == 1)
-                else:
-                    use_fallback = True
-                    peaks = []
-
-                if use_fallback:
-                    # Second-derivative fallback for monotonic dV/dQ (e.g. high-rate cycles)
-                    # Heavy smoothing on dV/dQ before computing second derivative
-                    from scipy.signal import savgol_filter
-                    heavy_window = max(25, int(len(sub_dv) * 0.2))
-                    heavy_window = min(heavy_window, len(sub_dv))
-                    if heavy_window % 2 == 0:
-                        heavy_window += 1
-
-                    if len(sub_dv) > heavy_window:
-                        dv_heavy_smooth = savgol_filter(sub_dv, heavy_window, polyorder=2)
-                    else:
-                        dv_heavy_smooth = sub_dv
-
-                    d2v = np.gradient(dv_heavy_smooth, sub_cap)
-                    d2_trimmed = d2v[min_idx:max_idx]
-
-                    if status == STATUS_CC_DISCHARGE:
-                        fallback_local_idx = np.argmin(d2_trimmed)
-                    else:
-                        fallback_local_idx = np.argmax(d2_trimmed)
-
-                    fallback_idx = fallback_local_idx + min_idx
-                    fallback_voltage = sub_volt[fallback_idx]
-                    fallback_capacity = sub_cap[fallback_idx]
-
-                    if len(peaks) == 1:
-                        # Compare peak vs fallback — use fallback if they disagree by >0.1V
-                        peak_voltage = sub_volt[best_peak_idx]
-                        if abs(peak_voltage - fallback_voltage) > 0.1:
-                            result[f'{key_prefix}_inflection_voltage'] = float(fallback_voltage)
-                            result[f'{key_prefix}_inflection_capacity'] = float(fallback_capacity)
-                            logging.debug(f"Using d²V/dQ² fallback for {status}: {fallback_voltage:.3f}V (peak was {peak_voltage:.3f}V)")
-                        else:
-                            result[f'{key_prefix}_inflection_voltage'] = float(peak_voltage)
-                            result[f'{key_prefix}_inflection_capacity'] = float(sub_cap[best_peak_idx])
-                            logging.debug(f"Found {status} inflection at {peak_voltage:.3f}V (confirmed by d²V/dQ² fallback)")
-                    else:
-                        # No peaks at all — use fallback directly
-                        result[f'{key_prefix}_inflection_voltage'] = float(fallback_voltage)
-                        result[f'{key_prefix}_inflection_capacity'] = float(fallback_capacity)
-                        logging.debug(f"No peaks for {status}, using d²V/dQ² fallback: {fallback_voltage:.3f}V")
-                else:
-                    # Multiple peaks found — use best peak directly
-                    inflection_voltage = sub_volt[best_peak_idx]
-                    inflection_capacity = sub_cap[best_peak_idx]
-                    result[f'{key_prefix}_inflection_voltage'] = float(inflection_voltage)
-                    result[f'{key_prefix}_inflection_capacity'] = float(inflection_capacity)
-                    logging.debug(
-                        f"Found {status} inflection at {inflection_voltage:.3f}V, {inflection_capacity:.3f}mAh using capacity constraint (25-75%) + voltage range {voltage_range}")
-
-            except Exception as e:
-                logging.debug(f"Error in peak detection for {status}: {e}, using fallback voltage 3.2V")
-                result[f'{key_prefix}_inflection_voltage'] = 3.2
-                continue
+            seg_result = self._find_segment_inflection(
+                seg_data, status, capacity_col, voltage_range, key_prefix, inflection_method
+            )
+            result.update(seg_result)
 
         logging.debug("DQDVAnalysis.find_inflection_point finished")
         return result if result else None

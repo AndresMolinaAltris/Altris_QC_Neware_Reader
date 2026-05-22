@@ -8,6 +8,99 @@ from constants import (
 )
 from features import DQDVAnalysis
 
+
+def _detect_fusi_steps(ndax_path):
+    """
+    Enhanced FuSi detection:
+    - Parses Step.xml
+    - Extracts reference capacity from early low C-rate steps (VPD part)
+    - Groups FuSi5 and FuSi2 pulses
+    """
+    import zipfile
+    import xml.etree.ElementTree as ET
+    import re
+
+    try:
+        with zipfile.ZipFile(ndax_path) as zf:
+            if 'Step.xml' not in zf.namelist():
+                return None
+            with zf.open('Step.xml') as f:
+                root = ET.fromstring(f.read().decode('gb2312'))
+    except Exception as e:
+        logging.warning(f"Failed to parse Step.xml: {e}")
+        return None
+
+    pulse_steps = []
+    reference_current_ma = None
+    reference_step = None
+
+    for step in root.findall('.//Step_Info/'):
+        step_id = int(step.attrib.get('Step_ID', 0))
+        step_type = step.attrib.get('Step_Type')
+
+        # === Extract reference low C-rate current (early CC_Chg) ===
+        if step_id <= 12 and step_type == '7':  # CC_Chg
+            # Try to find current setting
+            curr_node = step.find(".//Curr")
+            if curr_node is not None and curr_node.attrib.get('Value'):
+                try:
+                    reference_current_ma = float(curr_node.attrib.get('Value'))
+                    reference_step = step_id
+                    logging.debug(f"Found reference current: {reference_current_ma:.1f} mA in Step {step_id}")
+                except:
+                    pass
+
+        # === FuSi pulse detection ===
+        if step_type != '2':
+            continue
+        if step.find('LimitCndData') is None:
+            continue
+
+        expr_node = step.find('LimitCndData/Value1')
+        expr = expr_node.attrib.get('Expression', '') if expr_node is not None else ''
+
+        # Improved C-rate multiplier parsing
+        c_rate_mult = None
+        if expr:
+            match = re.search(r'User2\*?(\d+\.?\d*)', expr, re.IGNORECASE)
+            if match:
+                c_rate_mult = float(match.group(1))
+
+        lim_time = step.find('Limit/Main/Time')
+        t_ms = int(lim_time.attrib['Value']) if lim_time is not None else None
+
+        pulse_steps.append({
+            'step_id': step_id,
+            'c_rate_mult': c_rate_mult,
+            't_ms': t_ms,
+            'expression': expr
+        })
+
+    if not pulse_steps:
+        return None
+
+    # Group consecutive pulse steps
+    groups = []
+    grp = [pulse_steps[0]]
+    for info in pulse_steps[1:]:
+        if info['step_id'] == grp[-1]['step_id'] + 1:
+            grp.append(info)
+        else:
+            groups.append(grp)
+            grp = [info]
+    groups.append(grp)
+
+    if len(groups) < 2:
+        return None
+
+    return {
+        'fusi5': groups[0],
+        'fusi2': groups[1],
+        'reference_current_ma': reference_current_ma,
+        'reference_step': reference_step,
+        'total_pulse_steps': len(pulse_steps)
+    }
+
 class CycleSelectionDialog(tk.Toplevel):
     """Dialog for selecting which cycles to display in plots and analysis."""
 
@@ -210,6 +303,10 @@ class FileSelector:
         # Create the complete analysis tab
         self.complete_tab = self._create_complete_analysis_tab()
         self.notebook.add(self.complete_tab, text="Complete Analysis")
+
+        # Create the FuSi profiles tab
+        self.fusi_tab = self._create_fusi_tab()
+        self.notebook.add(self.fusi_tab, text="FuSi Profiles")
 
         # Move existing components into the first tab
         # Create file lists frame in the plot tab
@@ -860,13 +957,6 @@ class FileSelector:
 
         logging.debug("FILE_SELECTOR. Comprehensive cleanup completed.")
 
-    def _cleanup(self):
-        """Basic cleanup resources before window destruction - kept for backward compatibility."""
-        logging.debug("FILE_SELECTOR. Cleanup method called.")
-        # Call the comprehensive cleanup instead
-        self._comprehensive_cleanup()
-        logging.debug("FILE_SELECTOR. Cleanup completed.")
-
     def _on_window_close(self):
         """Handle window close event when the X button is clicked."""
         logging.debug("FILE_SELECTOR. Window close (X button) detected.")
@@ -1469,6 +1559,207 @@ class FileSelector:
         # Update Complete Analysis table retention columns
         self._update_rate_retention_in_table()
 
+    # ------------------------------------------------------------------
+    # FuSi Profiles tab
+    # ------------------------------------------------------------------
+
+    def _create_fusi_tab(self):
+        """Create the FuSi Profiles tab with button and two plot areas."""
+        fusi_tab = ttk.Frame(self.notebook)
+        fusi_tab.columnconfigure(0, weight=1)
+        fusi_tab.rowconfigure(0, weight=0)  # Button row
+        fusi_tab.rowconfigure(1, weight=1)  # Plot area
+
+        # Button frame
+        btn_frame = ttk.Frame(fusi_tab)
+        btn_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(5, 0))
+
+        self.fusi_generate_btn = ttk.Button(
+            btn_frame, text="Generate FuSi Profiles",
+            state="disabled", command=self._on_generate_fusi
+        )
+        self.fusi_generate_btn.pack(side=tk.LEFT, padx=5, pady=5)
+
+        ttk.Label(btn_frame,
+                  text="Detects FuSi5 and FuSi2 step sequences from loaded NDAX files.",
+                  foreground="gray").pack(side=tk.LEFT, padx=(10, 0), pady=5)
+
+        # Plot area — plot container filled on demand
+        plot_frame = ttk.LabelFrame(fusi_tab, text="FuSi Discharge Profiles")
+        plot_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        plot_frame.columnconfigure(0, weight=1)
+        plot_frame.rowconfigure(0, weight=1)
+
+        self.fusi_plot_container = ttk.Frame(plot_frame)
+        self.fusi_plot_container.grid(row=0, column=0, sticky="nsew")
+
+        # Placeholder canvas so the tab doesn't look broken before data is loaded
+        self.fusi_fig = Figure(figsize=(12, 8))
+        self.fusi_canvas = FigureCanvasTkAgg(self.fusi_fig, master=self.fusi_plot_container)
+        toolbar_frame = ttk.Frame(self.fusi_plot_container)
+        toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+        self.fusi_toolbar = NavigationToolbar2Tk(self.fusi_canvas, toolbar_frame)
+        self.fusi_toolbar.update()
+        self.fusi_canvas.draw()
+        self.fusi_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        return fusi_tab
+
+    def _on_generate_fusi(self):
+        """Extract FuSi5 and FuSi2 data from loaded files and plot them."""
+        loader = getattr(self, '_data_loader', None) or getattr(self, '_raw_data_loader', None)
+        if loader is None:
+            messagebox.showwarning("No Data", "Process files first before generating FuSi profiles.")
+            return
+
+        self.fusi_generate_btn.config(state="disabled")
+        self.root.update()
+        try:
+            file_data = []
+            for path in self.selected_files:
+                info = _detect_fusi_steps(path)
+                if info is None:
+                    continue
+                df = loader.get_data(path)
+                if df is None or df.empty:
+                    continue
+
+                cell_id = os.path.splitext(os.path.basename(path))[0]
+                fusi5_ids = [s['step_id'] for s in info['fusi5']]
+                fusi2_ids = [s['step_id'] for s in info['fusi2']]
+
+                df5 = df[df['Step'].isin(fusi5_ids)].copy()
+                df2 = df[df['Step'].isin(fusi2_ids)].copy()
+
+                def _make_continuous_time(d):
+                    """Convert per-step 'Time' (which resets at every step) into continuous cumulative time."""
+                    if d is None or d.empty:
+                        return d
+                    d = d.sort_index().copy()
+                    t = d['Time'].astype(float)
+                    delta = t.diff()
+                    # When Time resets (negative delta at new step start), use the new step's current time value
+                    delta = delta.where(delta >= 0, t)
+                    delta.iloc[0] = 0.0
+                    d['t_rel'] = delta.cumsum()
+                    return d
+
+                if not df5.empty:
+                    df5 = _make_continuous_time(df5)
+                if not df2.empty:
+                    df2 = _make_continuous_time(df2)
+
+                file_data.append({
+                    'cell_id': cell_id,
+                    'fusi5_df': df5 if not df5.empty else None,
+                    'fusi5_steps': info['fusi5'],
+                    'fusi2_df': df2 if not df2.empty else None,
+                    'fusi2_steps': info['fusi2'],
+                })
+
+                #df5 = df[df['Step'].isin(fusi5_ids)].copy()
+                #df2 = df[df['Step'].isin(fusi2_ids)].copy()
+
+                #if not df5.empty:
+                #    df5['t_rel'] = (df5['Time'] - df5['Time'].iloc[0]).astype(float)
+                #if not df2.empty:
+                #    df2['t_rel'] = (df2['Time'] - df2['Time'].iloc[0]).astype(float)
+
+                #file_data.append({
+                #    'cell_id': cell_id,
+                #    'fusi5_df': df5 if not df5.empty else None,
+                #    'fusi5_steps': info['fusi5'],
+                #    'fusi2_df': df2 if not df2.empty else None,
+                #    'fusi2_steps': info['fusi2'],
+                #})
+
+            if not file_data:
+                messagebox.showinfo(
+                    "No FuSi Data",
+                    "None of the selected files contain a FuSi protocol.\n"
+                    "FuSi files must have at least two groups of consecutive "
+                    "dynamic-current CC discharge steps."
+                )
+                return
+
+            fig = self._make_fusi_figure(file_data)
+            self.update_fusi_plot(fig)
+
+        except Exception as e:
+            logging.debug(f"FuSi profile generation error: {e}")
+            messagebox.showerror("FuSi Error", str(e))
+        finally:
+            self.fusi_generate_btn.config(state="normal")
+
+    def _make_fusi_figure(self, file_data):
+        """Build a Figure with FuSi5 (top) and FuSi2 (bottom) subplots."""
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        fig = Figure(figsize=(12, 8))
+        ax5 = fig.add_subplot(211)
+        ax2 = fig.add_subplot(212)
+        ax5r = ax5.twinx()
+        ax2r = ax2.twinx()
+
+        for i, item in enumerate(file_data):
+            c = colors[i % len(colors)]
+            lbl = item['cell_id']
+
+            df5 = item.get('fusi5_df')
+            if df5 is not None:
+                ax5.plot(df5['t_rel'], df5['Voltage'], color=c, lw=1.4, label=lbl)
+                ax5r.plot(df5['t_rel'], df5['Current(mA)'].abs() / 1000,
+                          color=c, lw=0.9, ls='--', alpha=0.55)
+
+            df2 = item.get('fusi2_df')
+            if df2 is not None:
+                ax2.plot(df2['t_rel'], df2['Voltage'], color=c, lw=1.4, label=lbl)
+                ax2r.plot(df2['t_rel'], df2['Current(mA)'].abs() / 1000,
+                          color=c, lw=0.9, ls='--', alpha=0.55)
+
+        # Shade step boundaries using the first FuSi file
+        first = next((x for x in file_data
+                      if x.get('fusi5_df') is not None or x.get('fusi2_df') is not None), None)
+        if first:
+            if first.get('fusi5_df') is not None:
+                self._shade_pulse_steps(ax5, first['fusi5_df'], first['fusi5_steps'])
+            if first.get('fusi2_df') is not None:
+                self._shade_pulse_steps(ax2, first['fusi2_df'], first['fusi2_steps'])
+
+        for ax, axr, title in [
+            (ax5, ax5r, 'FuSi5 Discharge Profile'),
+            (ax2, ax2r, 'FuSi2 Discharge Profile'),
+        ]:
+            ax.set_xlabel('Time (s)')
+            ax.set_ylabel('Voltage (V)')
+            ax.set_title(title, fontsize=11, fontweight='bold')
+            ax.legend(loc='lower left', fontsize=8)
+            ax.grid(True, alpha=0.25)
+            axr.set_ylabel('|Current| (A)', color='#777777', fontsize=9)
+            axr.tick_params(axis='y', labelcolor='#777777')
+
+        fig.subplots_adjust(hspace=0.38, left=0.07, right=0.93, top=0.94, bottom=0.08)
+        return fig
+
+    def _shade_pulse_steps(self, ax, df, step_infos):
+        """Shade each pulse step with alternating background and annotate C-rate."""
+        shade_colors = ['#e8f0fe', '#fef3e8']
+        for j, info in enumerate(step_infos):
+            step_df = df[df['Step'] == info['step_id']]
+            if step_df.empty:
+                continue
+            t_start = float(step_df['t_rel'].iloc[0])
+            t_end = float(step_df['t_rel'].iloc[-1])
+            ax.axvspan(t_start, t_end, alpha=0.45,
+                       color=shade_colors[j % 2], zorder=0)
+            if info.get('c_rate_mult') is not None:
+                t_mid = (t_start + t_end) / 2
+                ax.annotate(
+                    f"{info['c_rate_mult']:.1f}C",
+                    xy=(t_mid, 1), xycoords=('data', 'axes fraction'),
+                    ha='center', va='bottom', fontsize=6.5,
+                    color='#444444', annotation_clip=False
+                )
+
     def _browse_directory(self):
         """Open dialog to select a directory and update the file list."""
         dir_path = filedialog.askdirectory(initialdir=self.current_dir.get())
@@ -2053,6 +2344,32 @@ class FileSelector:
             # Insert the statistics row
             stat_id = self.analysis_table.insert('', 'end', values=row_values)
             self.analysis_table.item(stat_id, tags=('statistic',))
+
+    def update_fusi_plot(self, fig):
+        """Replace the FuSi canvas with a new figure."""
+        if not hasattr(self, 'fusi_tab') or not self.fusi_tab.winfo_exists():
+            return
+
+        # Destroy existing widgets in the plot container
+        if hasattr(self, 'fusi_plot_container') and self.fusi_plot_container.winfo_exists():
+            for widget in list(self.fusi_plot_container.winfo_children()):
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
+
+        self.fusi_fig = fig
+
+        try:
+            self.fusi_canvas = FigureCanvasTkAgg(fig, master=self.fusi_plot_container)
+            toolbar_frame = ttk.Frame(self.fusi_plot_container)
+            toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+            self.fusi_toolbar = NavigationToolbar2Tk(self.fusi_canvas, toolbar_frame)
+            self.fusi_toolbar.update()
+            self.fusi_canvas.draw()
+            self.fusi_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        except Exception as e:
+            logging.debug(f"update_fusi_plot error: {e}")
 
     def update_dqdv_plot(self, fig, dqdv_stats=None):
         """
