@@ -4,7 +4,8 @@ from common.imports import (
 )
 from data_loader import DataLoader # For some reason I cannot import this from common imports
 from constants import (
-    STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE, COL_CURRENT
+    STATUS_CC_CHARGE, STATUS_CC_DISCHARGE, COL_STATUS, COL_CYCLE,
+    COL_CURRENT, COL_DISCHARGE_CAPACITY
 )
 from features import DQDVAnalysis
 
@@ -1649,12 +1650,49 @@ class FileSelector:
                 if not df2.empty:
                     df2 = _make_continuous_time(df2)
 
+                # Resolve true 1C capacity: mass → database → first cycle discharge
+                SPECIFIC_CAPACITY_MAH_G = 150.0
+                capacity_1c_mah = None
+                active_mass_g = None
+                ndax_mass = df.attrs.get('active_mass')
+                if ndax_mass:
+                    active_mass_g = float(ndax_mass)  # already grams (NewareNDAx stores grams in attrs)
+                if active_mass_g is None:
+                    try:
+                        from cell_database import CellDatabase
+                        mass_val = CellDatabase.get_instance().get_mass(cell_id)
+                        if mass_val is not None:
+                            active_mass_g = float(mass_val)  # already grams (cell_database divides mg→g at load)
+                    except Exception:
+                        pass
+                if active_mass_g:
+                    capacity_1c_mah = active_mass_g * SPECIFIC_CAPACITY_MAH_G
+                else:
+                    cycle1_dchg = df[
+                        (df[COL_CYCLE] == 1) & (df[COL_STATUS] == STATUS_CC_DISCHARGE)
+                    ]
+                    if not cycle1_dchg.empty:
+                        capacity_1c_mah = float(cycle1_dchg[COL_DISCHARGE_CAPACITY].max())
+
+                def _enrich_crates(steps, full_df, cap_1c):
+                    result = []
+                    for step_info in steps:
+                        step_info = dict(step_info)
+                        if cap_1c and cap_1c > 0:
+                            step_rows = full_df[full_df['Step'] == step_info['step_id']]
+                            if not step_rows.empty:
+                                step_info['true_c_rate'] = (
+                                    abs(float(step_rows[COL_CURRENT].median())) / cap_1c
+                                )
+                        result.append(step_info)
+                    return result
+
                 file_data.append({
                     'cell_id': cell_id,
                     'fusi5_df': df5 if not df5.empty else None,
-                    'fusi5_steps': info['fusi5'],
+                    'fusi5_steps': _enrich_crates(info['fusi5'], df, capacity_1c_mah),
                     'fusi2_df': df2 if not df2.empty else None,
-                    'fusi2_steps': info['fusi2'],
+                    'fusi2_steps': _enrich_crates(info['fusi2'], df, capacity_1c_mah),
                 })
 
                 #df5 = df[df['Step'].isin(fusi5_ids)].copy()
@@ -1751,10 +1789,18 @@ class FileSelector:
             t_end = float(step_df['t_rel'].iloc[-1])
             ax.axvspan(t_start, t_end, alpha=0.45,
                        color=shade_colors[j % 2], zorder=0)
-            if info.get('c_rate_mult') is not None:
+            true_cr = info.get('true_c_rate')
+            display_cr = info.get('c_rate_mult')
+            if true_cr is not None:
+                label = f"{true_cr:.1f}C"
+            elif display_cr is not None:
+                label = f"{display_cr:.1f}C"
+            else:
+                label = None
+            if label is not None:
                 t_mid = (t_start + t_end) / 2
                 ax.annotate(
-                    f"{info['c_rate_mult']:.1f}C",
+                    label,
                     xy=(t_mid, 1), xycoords=('data', 'axes fraction'),
                     ha='center', va='bottom', fontsize=6.5,
                     color='#444444', annotation_clip=False
